@@ -20,7 +20,7 @@ export async function sendPushToUser(userId: string, payload: { title: string; b
       await webpush.sendNotification({
         endpoint: subscription.endpoint,
         keys: { p256dh: subscription.p256dh, auth: subscription.auth }
-      }, JSON.stringify(payload), { TTL: 60 * 60, urgency: "normal", topic: payload.tag?.slice(0, 32) });
+      }, JSON.stringify(payload), { TTL: 60 * 60, urgency: "normal" });
       sent++;
     } catch (error) {
       const statusCode = (error as { statusCode?: number }).statusCode;
