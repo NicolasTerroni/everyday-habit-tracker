@@ -330,8 +330,8 @@ Vercel Hobby cannot attach personal Hobby projects to repositories owned by GitH
 ### Step 2: Neon
 
 1. Create a Neon Free project without adding a payment method.
-2. Copy the pooled connection string.
-3. Put it in local `.env.local` as `DATABASE_URL`.
+2. Copy both the pooled and direct connection strings.
+3. Put them in local `.env.local` as `DATABASE_URL` and `DATABASE_URL_UNPOOLED` respectively. Runtime requests use the pooled connection; Drizzle migrations prefer the direct connection.
 4. Run `npm run db:migrate` once.
 
 Migrations should be an explicit deployment step. Do not run schema push automatically on every serverless startup.

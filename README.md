@@ -2,6 +2,8 @@
 
 A private, mobile-first habit tracker built as an installable Next.js PWA. It keeps event-level history, supports boolean/quantity/duration/count habits, historical editing, conditional Web Push reminders, calendars, and descriptive statistics—without streaks or gamification.
 
+Production: [everyday-habit-tracker-ten.vercel.app](https://everyday-habit-tracker-ten.vercel.app)
+
 ## Documentation
 
 - [Developer guide](./docs/DEVELOPER_GUIDE.md): architecture, decisions, local setup, deployment, operations, and roadmap.
@@ -97,7 +99,7 @@ Web Push requires HTTPS in production. Localhost is treated as a secure context 
    - `BETTER_AUTH_URL=https://your-project.vercel.app`
    - `VAPID_SUBJECT=mailto:your-real-email@example.com`
 4. Deploy. After the first deployment, use its final URL for `BETTER_AUTH_URL` and redeploy if the URL changed.
-5. Apply migrations from your computer with the production Neon `DATABASE_URL` in `.env.local`:
+5. Apply migrations from your computer with the production Neon `DATABASE_URL_UNPOOLED` in `.env.local` (the pooled `DATABASE_URL` remains the runtime connection):
 
    ```bash
    npm run db:migrate
