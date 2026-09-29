@@ -1,0 +1,502 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  addDays, addMonths, eachDayOfInterval, endOfMonth, endOfWeek,
+  format, isSameMonth, parseISO, startOfMonth, startOfWeek, subDays, subMonths
+} from "date-fns";
+import {
+  Archive, BarChart3, Bell, CalendarDays, Check, ChevronLeft, ChevronRight,
+  ArrowDown, ArrowUp, Circle, Clock3, Home, LoaderCircle, Minus, MoreHorizontal, Plus, RotateCcw,
+  Settings, Sparkles
+} from "lucide-react";
+import { authClient } from "@/lib/auth-client";
+import { Modal } from "./modal";
+import type { AppData, Entry, Habit, HabitType, Reminder } from "./types";
+
+type Tab = "today" | "calendar" | "insights" | "settings";
+type User = { name: string; email: string; timezone: string };
+
+const COLORS = ["#7565d9", "#d96b5f", "#3f8f77", "#cf8b38", "#4e7cb8", "#9a5f90"];
+const ICONS = ["✨", "💧", "📚", "🏋️", "🧘", "🥗", "🌿", "✍️", "🚶", "💊", "🎸", "🇮🇹"];
+
+function localDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dateInTimezone(iso: string, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(iso));
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+function timestampFor(date: string) {
+  const now = new Date();
+  if (date === localDate()) return now.toISOString();
+  return new Date(`${date}T12:00:00`).toISOString();
+}
+
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...init?.headers }
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: "Request failed" }));
+    throw new Error(body.error || "Request failed");
+  }
+  return response.status === 204 ? undefined as T : response.json();
+}
+
+function rangeFor(tab: Tab, cursor: Date, selectedDate: string) {
+  if (tab === "calendar") {
+    return { from: localDate(startOfMonth(cursor)), to: localDate(endOfMonth(cursor)) };
+  }
+  if (tab === "insights") {
+    return { from: localDate(subDays(new Date(), 89)), to: localDate() };
+  }
+  return { from: selectedDate, to: selectedDate };
+}
+
+export function HabitApp({ user: initialUser }: { user: User }) {
+  const [user, setUser] = useState(initialUser);
+  const [tab, setTab] = useState<Tab>("today");
+  const [selectedDate, setSelectedDate] = useState(localDate());
+  const [cursor, setCursor] = useState(startOfMonth(new Date()));
+  const [data, setData] = useState<AppData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [habitModal, setHabitModal] = useState<Habit | "new" | null>(null);
+  const [entryModal, setEntryModal] = useState<Habit | null>(null);
+  const [menuHabit, setMenuHabit] = useState<Habit | null>(null);
+  const [reminderHabit, setReminderHabit] = useState<Habit | null>(null);
+  const [offline, setOffline] = useState(false);
+
+  const range = useMemo(() => rangeFor(tab, cursor, selectedDate), [tab, cursor, selectedDate]);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await api<AppData>(`/api/data?from=${range.from}&to=${range.to}${tab === "settings" ? "&includeArchived=1" : ""}`);
+      setData(result);
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load your habits");
+    } finally { setLoading(false); }
+  }, [range.from, range.to, tab]);
+
+  useEffect(() => {
+    const task = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(task);
+  }, [load]);
+  useEffect(() => {
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(console.error);
+    const update = () => setOffline(!navigator.onLine);
+    update();
+    window.addEventListener("online", update); window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
+
+  const entriesFor = useCallback((habitId: string, date = selectedDate) =>
+    (data?.entries || []).filter((entry) => entry.habitId === habitId && dateInTimezone(entry.timestamp, user.timezone) === date),
+  [data?.entries, selectedDate, user.timezone]);
+
+  async function addEntry(habit: Habit, value: number, note?: string, date = selectedDate) {
+    try {
+      await api("/api/entries", { method: "POST", body: JSON.stringify({ habitId: habit.id, timestamp: timestampFor(date), value, note: note || null }) });
+      await load();
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save entry");
+      return false;
+    }
+  }
+
+  async function removeEntry(id: string) {
+    try { await api(`/api/entries/${id}`, { method: "DELETE" }); await load(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not remove entry"); }
+  }
+
+  async function toggleBoolean(habit: Habit, date = selectedDate) {
+    const existing = entriesFor(habit.id, date)[0];
+    if (existing) await removeEntry(existing.id); else await addEntry(habit, 1, undefined, date);
+  }
+
+  function openDay(date: string) {
+    setSelectedDate(date); setTab("today");
+  }
+
+  const displayDate = parseISO(selectedDate);
+  const isToday = selectedDate === localDate();
+  const activeHabits = (data?.habits || []).filter((habit) => {
+    if (isToday) return habit.active;
+    return habit.active || Boolean(habit.archivedAt && selectedDate <= dateInTimezone(habit.archivedAt, user.timezone));
+  });
+
+  return (
+    <main className="app-frame">
+      <div className="desktop-rail">
+        <div className="brand"><span className="brand-mark"><Check size={16} /></span> everyday</div>
+        <nav>{navItems.map((item) => <NavButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />)}</nav>
+        <div className="rail-user"><span>{user.name.slice(0, 1).toUpperCase()}</span><div><strong>{user.name}</strong><small>{user.email}</small></div></div>
+      </div>
+
+      <section className="app-content">
+        {offline && <div className="offline-banner">You’re offline. Saved history is still available; changes need a connection.</div>}
+        {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError("")}>Dismiss</button></div>}
+
+        {tab === "today" && <>
+          <PageHeader eyebrow={isToday ? "TODAY" : format(displayDate, "EEEE")} title={isToday ? `Good ${greeting()}, ${user.name.split(" ")[0]}` : format(displayDate, "MMMM d, yyyy")} subtitle={isToday ? format(displayDate, "EEEE, MMMM d") : "Historical entries can be edited."}>
+            <button className="date-step" onClick={() => setSelectedDate(localDate(addDays(displayDate, -1)))}><ChevronLeft size={18} /></button>
+            {!isToday && <button className="text-button" onClick={() => setSelectedDate(localDate())}>Today</button>}
+            <button className="date-step" disabled={isToday} onClick={() => setSelectedDate(localDate(addDays(displayDate, 1)))}><ChevronRight size={18} /></button>
+          </PageHeader>
+          <TodayView loading={loading} habits={activeHabits} entriesFor={entriesFor} onToggle={toggleBoolean} onAdd={(habit) => setEntryModal(habit)} onMenu={setMenuHabit} />
+          <button className="fab" onClick={() => setHabitModal("new")} aria-label="Create habit"><Plus size={24} /></button>
+        </>}
+
+        {tab === "calendar" && <CalendarView loading={loading} data={data} cursor={cursor} timezone={user.timezone} onCursor={setCursor} onDay={openDay} />}
+        {tab === "insights" && <InsightsView loading={loading} data={data} timezone={user.timezone} />}
+        {tab === "settings" && <SettingsView user={user} habits={data?.habits || []} loading={loading} onUser={setUser} onChanged={load} />}
+      </section>
+
+      <nav className="bottom-nav">{navItems.map((item) => <NavButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />)}</nav>
+
+      {habitModal && <HabitEditor habit={habitModal === "new" ? null : habitModal} onClose={() => setHabitModal(null)} onSaved={async () => { setHabitModal(null); await load(); }} />}
+      {entryModal && <EntryEditor habit={entryModal} entries={entriesFor(entryModal.id)} onClose={() => setEntryModal(null)} onAdd={(value, note) => addEntry(entryModal, value, note)} onRemove={removeEntry} />}
+      {menuHabit && <HabitMenu habit={menuHabit} entries={entriesFor(menuHabit.id)} onClose={() => setMenuHabit(null)} onEdit={() => { setHabitModal(menuHabit); setMenuHabit(null); }} onEntry={() => { setEntryModal(menuHabit); setMenuHabit(null); }} onReminder={() => { setReminderHabit(menuHabit); setMenuHabit(null); }} onChanged={load} />}
+      {reminderHabit && <ReminderEditor habit={reminderHabit} reminder={(data?.reminders || []).find((item) => item.habitId === reminderHabit.id)} onClose={() => setReminderHabit(null)} onSaved={async () => { setReminderHabit(null); await load(); }} />}
+    </main>
+  );
+}
+
+const navItems: { id: Tab; label: string; icon: typeof Home }[] = [
+  { id: "today", label: "Today", icon: Home },
+  { id: "calendar", label: "Calendar", icon: CalendarDays },
+  { id: "insights", label: "Insights", icon: BarChart3 },
+  { id: "settings", label: "Settings", icon: Settings }
+];
+
+function NavButton({ item, active, onClick }: { item: typeof navItems[number]; active: boolean; onClick: () => void }) {
+  const Icon = item.icon;
+  return <button className={active ? "active" : ""} onClick={onClick}><Icon size={20} strokeWidth={active ? 2.3 : 1.8} /><span>{item.label}</span></button>;
+}
+
+function PageHeader({ eyebrow, title, subtitle, children }: { eyebrow: string; title: string; subtitle: string; children?: React.ReactNode }) {
+  return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p className="muted">{subtitle}</p></div>{children && <div className="header-actions">{children}</div>}</header>;
+}
+
+function greeting() {
+  const hour = new Date().getHours();
+  return hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+}
+
+function TodayView({ loading, habits, entriesFor, onToggle, onAdd, onMenu }: {
+  loading: boolean; habits: Habit[]; entriesFor: (id: string) => Entry[];
+  onToggle: (habit: Habit) => void; onAdd: (habit: Habit) => void; onMenu: (habit: Habit) => void;
+}) {
+  if (loading) return <Loading />;
+  if (!habits.length) return <EmptyState icon={<Sparkles />} title="A blank page" text="Create your first habit and begin a record that belongs only to you." />;
+  const complete = habits.filter((habit) => isComplete(habit, entriesFor(habit.id))).length;
+  return <div className="today-wrap">
+    <div className="day-progress"><div><span>{complete}</span> of {habits.length} complete</div><div className="progress-track"><i style={{ width: `${habits.length ? complete / habits.length * 100 : 0}%` }} /></div></div>
+    <div className="habit-list">{habits.map((habit) => <HabitCard key={habit.id} habit={habit} entries={entriesFor(habit.id)} onToggle={() => onToggle(habit)} onAdd={() => onAdd(habit)} onMenu={() => onMenu(habit)} />)}</div>
+  </div>;
+}
+
+function HabitCard({ habit, entries, onToggle, onAdd, onMenu }: { habit: Habit; entries: Entry[]; onToggle: () => void; onAdd: () => void; onMenu: () => void }) {
+  const total = entries.reduce((sum, item) => sum + Number(item.value), 0);
+  const completed = isComplete(habit, entries);
+  const percent = habit.type === "boolean" ? (completed ? 100 : 0) : Math.min(100, total / Number(habit.targetValue || 1) * 100);
+  return <article className={`habit-card ${completed ? "complete" : ""}`} style={{ "--habit": habit.color } as React.CSSProperties}>
+    <button className="habit-main" onClick={habit.type === "boolean" ? onToggle : onAdd}>
+      <span className="habit-icon">{habit.icon}</span>
+      <span className="habit-copy"><strong>{habit.name}</strong><small>{habit.type === "boolean" ? (completed ? "Completed" : "Not completed") : `${pretty(total)} / ${pretty(Number(habit.targetValue))} ${habit.unit}`}</small>{habit.type !== "boolean" && <i><b style={{ width: `${percent}%` }} /></i>}</span>
+      {habit.type === "boolean" ? <span className={`check-control ${completed ? "checked" : ""}`}>{completed ? <Check size={18} /> : <Circle size={21} />}</span> : <span className="add-control"><Plus size={19} /></span>}
+    </button>
+    <button className="more-button" aria-label={`More actions for ${habit.name}`} onClick={onMenu}><MoreHorizontal size={20} /></button>
+  </article>;
+}
+
+function isComplete(habit: Habit, entries: Entry[]) {
+  if (habit.type === "boolean") return entries.length > 0;
+  return entries.reduce((sum, entry) => sum + Number(entry.value), 0) >= Number(habit.targetValue || 0);
+}
+
+function pretty(value: number) { return Number.isInteger(value) ? String(value) : value.toLocaleString(undefined, { maximumFractionDigits: 2 }); }
+
+function Loading() { return <div className="loading"><LoaderCircle className="spin" /><span>Opening your record…</span></div>; }
+function EmptyState({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) { return <div className="empty-state"><span>{icon}</span><h2>{title}</h2><p>{text}</p></div>; }
+
+function CalendarView({ loading, data, cursor, timezone, onCursor, onDay }: {
+  loading: boolean; data: AppData | null; cursor: Date; timezone: string; onCursor: (date: Date) => void; onDay: (date: string) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [mode, setMode] = useState<"month" | "year">("month");
+  const [yearResult, setYearResult] = useState<{ year: number; data: AppData } | null>(null);
+  useEffect(() => {
+    if (mode !== "year") return;
+    const year = cursor.getFullYear();
+    void api<AppData>(`/api/data?from=${year}-01-01&to=${year}-12-31`).then((result) => setYearResult({ year, data: result }));
+  }, [mode, cursor]);
+  const calendarData = mode === "year" && yearResult?.year === cursor.getFullYear() ? yearResult.data : data;
+  const activeIds = selected.length ? selected : (calendarData?.habits || []).map((habit) => habit.id);
+  const gridDays = eachDayOfInterval({ start: startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 }), end: endOfWeek(endOfMonth(cursor), { weekStartsOn: 1 }) });
+
+  function completionFor(date: string) {
+    const eligible = (calendarData?.habits || []).filter((habit) => activeIds.includes(habit.id) && date >= dateInTimezone(habit.createdAt, timezone) && (!habit.archivedAt || date <= dateInTimezone(habit.archivedAt, timezone)));
+    if (!eligible.length) return null;
+    const completed = eligible.filter((habit) => isComplete(habit, (calendarData?.entries || []).filter((entry) => entry.habitId === habit.id && dateInTimezone(entry.timestamp, timezone) === date))).length;
+    return completed / eligible.length;
+  }
+
+  return <>
+    <PageHeader eyebrow="HISTORY" title="Your calendar" subtitle="The shape of your days, without judgment.">
+      <button className="date-step" onClick={() => onCursor(mode === "month" ? subMonths(cursor, 1) : new Date(cursor.getFullYear() - 1, 0, 1))}><ChevronLeft size={18} /></button>
+      <button className="date-step" onClick={() => onCursor(mode === "month" ? addMonths(cursor, 1) : new Date(cursor.getFullYear() + 1, 0, 1))}><ChevronRight size={18} /></button>
+    </PageHeader>
+    <div className="segmented"><button className={mode === "month" ? "active" : ""} onClick={() => setMode("month")}>Month</button><button className={mode === "year" ? "active" : ""} onClick={() => setMode("year")}>Year</button></div>
+    {loading || (mode === "year" && yearResult?.year !== cursor.getFullYear()) ? <Loading /> : !calendarData?.habits.length ? <EmptyState icon={<CalendarDays />} title="Nothing here yet" text="Your history will appear after you create a habit." /> : <>
+      <div className="filter-row">{calendarData.habits.map((habit) => {
+        const chosen = !selected.length || selected.includes(habit.id);
+        return <button key={habit.id} className={chosen ? "chosen" : ""} onClick={() => setSelected((current) => current.includes(habit.id) ? current.filter((id) => id !== habit.id) : [...current, habit.id])}><span style={{ background: habit.color }} />{habit.name}</button>;
+      })}</div>
+      {mode === "month" ? <section className="calendar-card">
+        <header><h2>{format(cursor, "MMMM yyyy")}</h2><p>Tap a day to review or edit</p></header>
+        <div className="week-labels">{["M", "T", "W", "T", "F", "S", "S"].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
+        <div className="month-grid">{gridDays.map((day) => {
+          const key = localDate(day); const ratio = completionFor(key); const future = key > localDate();
+          return <button key={key} disabled={future} className={`${!isSameMonth(day, cursor) ? "outside" : ""} ${key === localDate() ? "today" : ""}`} onClick={() => onDay(key)}><span>{format(day, "d")}</span>{ratio !== null && !future && <i className={ratio === 1 ? "full" : ""} style={{ "--ratio": ratio } as React.CSSProperties} />}</button>;
+        })}</div>
+        <footer><span><i className="legend empty" /> Not done</span><span><i className="legend partial" /> Some</span><span><i className="legend full" /> Complete</span></footer>
+      </section> : <section className="year-card"><h2>{cursor.getFullYear()}</h2><div className="year-grid">{Array.from({ length: 12 }, (_, month) => {
+        const monthDate = new Date(cursor.getFullYear(), month, 1);
+        const days = eachDayOfInterval({ start: startOfMonth(monthDate), end: endOfMonth(monthDate) }).filter((day) => localDate(day) <= localDate());
+        const values = days.map((day) => completionFor(localDate(day))).filter((value): value is number => value !== null);
+        const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+        return <button key={month} onClick={() => { onCursor(monthDate); setMode("month"); }}><span>{format(monthDate, "MMM")}</span><div>{Array.from({ length: 12 }, (_, i) => <i key={i} className={i / 12 < average ? "filled" : ""} />)}</div><small>{Math.round(average * 100)}%</small></button>;
+      })}</div></section>}
+    </>}
+  </>;
+}
+
+function InsightsView({ loading, data, timezone }: { loading: boolean; data: AppData | null; timezone: string }) {
+  const days = useMemo(() => eachDayOfInterval({ start: subDays(new Date(), 89), end: new Date() }), []);
+  if (loading) return <><PageHeader eyebrow="PATTERNS" title="Your insights" subtitle="Description, not judgment." /><Loading /></>;
+  if (!data?.habits.length) return <><PageHeader eyebrow="PATTERNS" title="Your insights" subtitle="Description, not judgment." /><EmptyState icon={<BarChart3 />} title="Patterns take time" text="Once you have a few entries, useful patterns will live here." /></>;
+
+  const eligibleFor = (habit: Habit, day: Date) => {
+    const date = localDate(day);
+    return date >= dateInTimezone(habit.createdAt, timezone) && (!habit.archivedAt || date <= dateInTimezone(habit.archivedAt, timezone));
+  };
+  const metrics = data.habits.map((habit) => {
+    const eligible = days.filter((day) => eligibleFor(habit, day));
+    const complete = eligible.filter((day) => isComplete(habit, data.entries.filter((entry) => entry.habitId === habit.id && dateInTimezone(entry.timestamp, timezone) === localDate(day))));
+    const total = data.entries.filter((entry) => entry.habitId === habit.id).reduce((sum, entry) => sum + Number(entry.value), 0);
+    return { habit, eligible: eligible.length, complete: complete.length, rate: eligible.length ? complete.length / eligible.length : 0, average: eligible.length ? total / eligible.length : 0 };
+  });
+  const overall = metrics.reduce((sum, metric) => sum + metric.complete, 0) / Math.max(1, metrics.reduce((sum, metric) => sum + metric.eligible, 0));
+  const weekdays = Array.from({ length: 7 }, (_, weekday) => {
+    const matching = days.filter((day) => (day.getDay() + 6) % 7 === weekday);
+    let possible = 0; let complete = 0;
+    for (const day of matching) for (const habit of data.habits) if (eligibleFor(habit, day)) {
+      possible++; if (isComplete(habit, data.entries.filter((entry) => entry.habitId === habit.id && dateInTimezone(entry.timestamp, timezone) === localDate(day)))) complete++;
+    }
+    return possible ? complete / possible : 0;
+  });
+
+  return <>
+    <PageHeader eyebrow="LAST 90 DAYS" title="Your insights" subtitle="Look for patterns, not perfection." />
+    <div className="insight-hero"><div className="ring" style={{ "--percent": overall * 100 } as React.CSSProperties}><span>{Math.round(overall * 100)}<small>%</small></span></div><div><p className="eyebrow">OVERALL COMPLETION</p><h2>{overall >= .8 ? "A steady rhythm." : overall >= .5 ? "A rhythm is forming." : "Every entry counts."}</h2><p>Across days when each habit existed.</p></div></div>
+    <section className="insight-card"><header><div><p className="eyebrow">BY HABIT</p><h2>How each habit is going</h2></div></header><div className="metric-list">{metrics.map(({ habit, complete, eligible, rate, average }) => <div key={habit.id}><span className="habit-icon small">{habit.icon}</span><div><strong>{habit.name}</strong><i><b style={{ width: `${rate * 100}%`, background: habit.color }} /></i></div><span>{habit.type === "boolean" ? `${complete}/${eligible}` : `${pretty(average)} ${habit.unit}/day`}<small>{Math.round(rate * 100)}%</small></span></div>)}</div></section>
+    <section className="insight-card"><header><div><p className="eyebrow">BY WEEKDAY</p><h2>Your weekly rhythm</h2></div></header><div className="weekday-chart">{weekdays.map((value, index) => <div key={index}><span>{Math.round(value * 100)}%</span><i><b style={{ height: `${Math.max(4, value * 100)}%` }} /></i><small>{["M", "T", "W", "T", "F", "S", "S"][index]}</small></div>)}</div></section>
+  </>;
+}
+
+function HabitEditor({ habit, onClose, onSaved }: { habit: Habit | null; onClose: () => void; onSaved: () => void }) {
+  const [type, setType] = useState<HabitType>(habit?.type || "boolean");
+  const [color, setColor] = useState(habit?.color || COLORS[0]);
+  const [icon, setIcon] = useState(habit?.icon || ICONS[0]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError("");
+    const form = new FormData(event.currentTarget);
+    const body = {
+      name: form.get("name"), description: form.get("description") || null, type,
+      targetValue: type === "boolean" ? null : Number(form.get("targetValue")),
+      unit: type === "boolean" ? null : form.get("unit"), icon, color
+    };
+    try { await api(habit ? `/api/habits/${habit.id}` : "/api/habits", { method: habit ? "PATCH" : "POST", body: JSON.stringify(body) }); onSaved(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save habit"); setBusy(false); }
+  }
+
+  return <Modal title={habit ? "Edit habit" : "Create a habit"} eyebrow={habit ? "MAKE A CHANGE" : "A NEW PRACTICE"} onClose={onClose}>
+    <form className="form-stack editor-form" onSubmit={submit}>
+      <label>Name<input name="name" defaultValue={habit?.name} required maxLength={80} autoFocus placeholder="e.g. Read, drink water, meditate" /></label>
+      <label>Description <span className="optional">optional</span><textarea name="description" defaultValue={habit?.description || ""} maxLength={500} placeholder="What does this habit mean to you?" /></label>
+      <fieldset><legend>Type</legend><div className="type-grid">{([
+        ["boolean", Check, "Done or not"], ["quantity", Plus, "Add amounts"], ["duration", Clock3, "Track minutes"], ["count", BarChart3, "Count times"]
+      ] as const).map(([value, Icon, caption]) => <button type="button" key={value} className={type === value ? "selected" : ""} onClick={() => setType(value)}><Icon size={18} /><strong>{value[0].toUpperCase() + value.slice(1)}</strong><small>{caption}</small></button>)}</div></fieldset>
+      {type !== "boolean" && <div className="split-fields"><label>Daily target<input name="targetValue" type="number" min="0.001" step="any" required defaultValue={habit?.targetValue || (type === "duration" ? 30 : type === "count" ? 1 : 2000)} /></label><label>Unit<input name="unit" required maxLength={24} defaultValue={habit?.unit || (type === "duration" ? "min" : type === "count" ? "times" : "ml")} /></label></div>}
+      <fieldset><legend>Icon</legend><div className="icon-picker">{ICONS.map((value) => <button type="button" key={value} className={icon === value ? "selected" : ""} onClick={() => setIcon(value)}>{value}</button>)}</div></fieldset>
+      <fieldset><legend>Color</legend><div className="color-picker">{COLORS.map((value) => <button type="button" aria-label={value} key={value} className={color === value ? "selected" : ""} style={{ background: value }} onClick={() => setColor(value)}>{color === value && <Check size={14} />}</button>)}</div></fieldset>
+      {error && <p className="form-error">{error}</p>}
+      <button className="primary-button" disabled={busy}>{busy ? "Saving…" : habit ? "Save changes" : "Create habit"}</button>
+    </form>
+  </Modal>;
+}
+
+function EntryEditor({ habit, entries, onClose, onAdd, onRemove }: { habit: Habit; entries: Entry[]; onClose: () => void; onAdd: (value: number, note?: string) => Promise<boolean>; onRemove: (id: string) => void }) {
+  const suggested = habit.type === "duration" ? [10, 20, 30] : habit.type === "count" ? [1, 2, 5] : [250, 500, 750];
+  const [value, setValue] = useState(suggested[0]);
+  const [busy, setBusy] = useState(false);
+  if (habit.type === "boolean") {
+    return <Modal title={`Note for ${habit.name}`} eyebrow="KEEP THE CONTEXT" onClose={onClose}>
+      <form className="form-stack editor-form" onSubmit={async (event) => { event.preventDefault(); setBusy(true); const form = new FormData(event.currentTarget); if (await onAdd(1, String(form.get("note") || ""))) onClose(); else setBusy(false); }}>
+        <label>Note<textarea name="note" required maxLength={1000} defaultValue={entries[0]?.note || ""} placeholder="What would you like to remember?" /></label>
+        {!entries.length && <p className="helper-text">Saving this note will also mark the habit complete for this day.</p>}
+        <button className="primary-button" disabled={busy}>{busy ? "Saving…" : "Save note"}</button>
+      </form>
+    </Modal>;
+  }
+  const total = entries.reduce((sum, entry) => sum + Number(entry.value), 0);
+  return <Modal title={habit.name} eyebrow="RECORD PROGRESS" onClose={onClose}>
+    <div className="entry-summary"><span className="habit-icon large">{habit.icon}</span><div><strong>{pretty(total)} / {pretty(Number(habit.targetValue))} {habit.unit}</strong><div className="progress-track"><i style={{ width: `${Math.min(100, total / Number(habit.targetValue || 1) * 100)}%`, background: habit.color }} /></div></div></div>
+    <form className="form-stack editor-form" onSubmit={async (event) => { event.preventDefault(); setBusy(true); const form = new FormData(event.currentTarget); if (await onAdd(value, String(form.get("note") || ""))) onClose(); else setBusy(false); }}>
+      <fieldset><legend>Quick add</legend><div className="quick-values">{suggested.map((amount) => <button type="button" key={amount} className={value === amount ? "selected" : ""} onClick={() => setValue(amount)}>+{amount} <small>{habit.unit}</small></button>)}</div></fieldset>
+      <label>Custom amount<input type="number" min="0.001" step="any" value={value} onChange={(event) => setValue(Number(event.target.value))} required /></label>
+      <label>Note <span className="optional">optional</span><textarea name="note" maxLength={1000} placeholder="Anything worth remembering?" /></label>
+      <button className="primary-button" disabled={busy}><Plus size={17} /> {busy ? "Saving…" : `Add ${pretty(value)} ${habit.unit}`}</button>
+    </form>
+    {!!entries.length && <div className="entries-list"><p className="eyebrow">TODAY&apos;S ENTRIES</p>{entries.map((entry) => <div key={entry.id}><span><strong>+{pretty(Number(entry.value))} {habit.unit}</strong><small>{new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{entry.note ? ` · ${entry.note}` : ""}</small></span><button aria-label="Remove entry" onClick={() => onRemove(entry.id)}><Minus size={16} /></button></div>)}</div>}
+  </Modal>;
+}
+
+function HabitMenu({ habit, entries, onClose, onEdit, onEntry, onReminder, onChanged }: { habit: Habit; entries: Entry[]; onClose: () => void; onEdit: () => void; onEntry: () => void; onReminder: () => void; onChanged: () => void }) {
+  const noteEntry = entries.find((entry) => entry.note);
+  async function archive() {
+    await api(`/api/habits/${habit.id}`, { method: "PATCH", body: JSON.stringify({ active: false }) }); onClose(); onChanged();
+  }
+  return <Modal title={habit.name} eyebrow="HABIT OPTIONS" onClose={onClose}>
+    <div className="action-list">
+      <button onClick={onEdit}><span><Settings size={19} /></span><div><strong>Edit habit</strong><small>Name, target, icon and color</small></div><ChevronRight size={18} /></button>
+      <button onClick={onEntry}><span><Plus size={19} /></span><div><strong>{habit.type === "boolean" ? "Add a note" : "Add progress or note"}</strong><small>{noteEntry ? `Latest: ${noteEntry.note}` : "Keep context with each entry"}</small></div><ChevronRight size={18} /></button>
+      <button onClick={onReminder}><span><Bell size={19} /></span><div><strong>Reminder settings</strong><small>Only remind me when incomplete</small></div><ChevronRight size={18} /></button>
+      <button className="danger" onClick={archive}><span><Archive size={19} /></span><div><strong>Archive habit</strong><small>History will be preserved</small></div><ChevronRight size={18} /></button>
+    </div>
+  </Modal>;
+}
+
+function ReminderEditor({ habit, reminder, onClose, onSaved }: { habit: Habit; reminder?: Reminder; onClose: () => void; onSaved: () => void }) {
+  const [repeat, setRepeat] = useState(Boolean(reminder?.intervalMinutes));
+  const [busy, setBusy] = useState(false);
+  const [pushState, setPushState] = useState<"idle" | "ready" | "error">("idle");
+
+  async function enablePush() {
+    try {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) throw new Error("Push is not supported on this device");
+      const registration = await navigator.serviceWorker.ready;
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") throw new Error("Notification permission was not granted");
+      const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!publicKey) throw new Error("VAPID public key is not configured");
+      const existing = await registration.pushManager.getSubscription();
+      const subscription = existing || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64(publicKey) });
+      await api("/api/push/subscribe", { method: "POST", body: JSON.stringify(subscription.toJSON()) });
+      setPushState("ready");
+    } catch { setPushState("error"); }
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true);
+    const form = new FormData(event.currentTarget);
+    const body = { habitId: habit.id, enabled: true, startTime: form.get("startTime"), endTime: repeat ? form.get("endTime") : null, intervalMinutes: repeat ? Number(form.get("intervalMinutes")) : null };
+    await api(reminder ? `/api/reminders/${reminder.id}` : "/api/reminders", { method: reminder ? "PATCH" : "POST", body: JSON.stringify(body) });
+    onSaved();
+  }
+
+  return <Modal title={`Remind me about ${habit.name}`} eyebrow="WHEN IT'S STILL INCOMPLETE" onClose={onClose}>
+    <div className="push-callout"><Bell size={20} /><div><strong>First, connect this device</strong><p>On iPhone, install Everyday to your Home Screen before enabling notifications.</p></div><button type="button" onClick={enablePush}>{pushState === "ready" ? "Connected" : pushState === "error" ? "Try again" : "Enable"}</button></div>
+    <form className="form-stack editor-form" onSubmit={submit}>
+      <label>First reminder<input type="time" name="startTime" required defaultValue={reminder?.startTime || "20:00"} /></label>
+      <label className="toggle-row"><span><strong>Repeat during the day</strong><small>Stops as soon as the target is reached</small></span><input type="checkbox" checked={repeat} onChange={(event) => setRepeat(event.target.checked)} /></label>
+      {repeat && <div className="split-fields"><label>Until<input type="time" name="endTime" required defaultValue={reminder?.endTime || "21:00"} /></label><label>Every<select name="intervalMinutes" defaultValue={reminder?.intervalMinutes || 180}><option value="60">1 hour</option><option value="120">2 hours</option><option value="180">3 hours</option><option value="240">4 hours</option></select></label></div>}
+      <p className="helper-text">A reminder is recorded once per scheduled slot, so retries can never create duplicates.</p>
+      <button className="primary-button" disabled={busy}>{busy ? "Saving…" : "Save reminder"}</button>
+      {reminder && <button type="button" className="danger-button" onClick={async () => { await api(`/api/reminders/${reminder.id}`, { method: "DELETE" }); onSaved(); }}>Delete reminder</button>}
+    </form>
+  </Modal>;
+}
+
+function urlBase64(value: string) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64); return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+}
+
+function SettingsView({ user, habits, loading, onUser, onChanged }: { user: User; habits: Habit[]; loading: boolean; onUser: (user: User) => void; onChanged: () => void }) {
+  const [dark, setDark] = useState(false);
+  const [message, setMessage] = useState("");
+  const archived = habits.filter((habit) => !habit.active);
+  const active = habits.filter((habit) => habit.active).sort((a, b) => a.sortOrder - b.sortOrder);
+  useEffect(() => {
+    const enabled = localStorage.getItem("everyday-theme") === "dark";
+    const task = window.setTimeout(() => setDark(enabled), 0);
+    document.documentElement.dataset.theme = enabled ? "dark" : "light";
+    return () => window.clearTimeout(task);
+  }, []);
+
+  async function updateTimezone(timezone: string) {
+    await api("/api/profile", { method: "PATCH", body: JSON.stringify({ timezone }) });
+    onUser({ ...user, timezone }); setMessage("Timezone updated");
+  }
+
+  async function testPush() {
+    try { const result = await api<{ sent: number }>("/api/push/test", { method: "POST" }); setMessage(result.sent ? "Test notification sent" : "Connect notifications from a habit reminder first"); }
+    catch (cause) { setMessage(cause instanceof Error ? cause.message : "Test failed"); }
+  }
+
+  function toggleTheme() {
+    const value = !dark; setDark(value); localStorage.setItem("everyday-theme", value ? "dark" : "light"); document.documentElement.dataset.theme = value ? "dark" : "light";
+  }
+
+  async function moveHabit(index: number, direction: -1 | 1) {
+    const otherIndex = index + direction;
+    if (!active[otherIndex]) return;
+    const current = active[index];
+    const other = active[otherIndex];
+    await Promise.all([
+      api(`/api/habits/${current.id}`, { method: "PATCH", body: JSON.stringify({ sortOrder: other.sortOrder }) }),
+      api(`/api/habits/${other.id}`, { method: "PATCH", body: JSON.stringify({ sortOrder: current.sortOrder }) })
+    ]);
+    onChanged();
+  }
+
+  return <>
+    <PageHeader eyebrow="YOUR SPACE" title="Settings" subtitle="A few thoughtful controls." />
+    {message && <div className="success-banner">{message}<button onClick={() => setMessage("")}>×</button></div>}
+    <section className="settings-card profile-card"><span>{user.name.slice(0, 1).toUpperCase()}</span><div><h2>{user.name}</h2><p>{user.email}</p></div></section>
+    <section className="settings-card"><p className="eyebrow">PREFERENCES</p>
+      <label className="settings-row"><span><strong>Timezone</strong><small>Controls “today” and reminder times</small></span><select value={user.timezone} onChange={(event) => void updateTimezone(event.target.value)}>{timezoneOptions(user.timezone).map((zone) => <option key={zone}>{zone}</option>)}</select></label>
+      <label className="settings-row"><span><strong>Dark appearance</strong><small>Easy on the eyes at night</small></span><input type="checkbox" checked={dark} onChange={toggleTheme} /></label>
+      <button className="settings-row" onClick={testPush}><span><strong>Test notifications</strong><small>Send a push to connected devices</small></span><Bell size={19} /></button>
+    </section>
+    <section className="settings-card"><p className="eyebrow">HABIT ORDER</p>
+      {active.map((habit, index) => <div className="archive-row" key={habit.id}><span className="habit-icon small">{habit.icon}</span><div><strong>{habit.name}</strong><small>Position {index + 1}</small></div><span className="order-buttons"><button disabled={index === 0} aria-label={`Move ${habit.name} up`} onClick={() => void moveHabit(index, -1)}><ArrowUp size={15} /></button><button disabled={index === active.length - 1} aria-label={`Move ${habit.name} down`} onClick={() => void moveHabit(index, 1)}><ArrowDown size={15} /></button></span></div>)}
+    </section>
+    <section className="settings-card"><p className="eyebrow">ARCHIVE</p>
+      {loading ? <LoaderCircle className="spin" /> : !archived.length ? <p className="muted settings-empty">Archived habits will appear here. Their history is never deleted.</p> : archived.map((habit) => <div className="archive-row" key={habit.id}><span className="habit-icon small">{habit.icon}</span><div><strong>{habit.name}</strong><small>History preserved</small></div><button onClick={async () => { await api(`/api/habits/${habit.id}`, { method: "PATCH", body: JSON.stringify({ active: true }) }); onChanged(); }}><RotateCcw size={16} /> Restore</button></div>)}
+    </section>
+    <section className="settings-card"><p className="eyebrow">ACCOUNT</p><button className="settings-row danger-text" onClick={async () => { await authClient.signOut(); window.location.reload(); }}><span><strong>Sign out</strong><small>Your data remains safely stored</small></span><ChevronRight size={18} /></button></section>
+    <p className="settings-foot">Everyday v1 · No ads, streaks, or gamification.</p>
+  </>;
+}
+
+function timezoneOptions(current: string) {
+  const common = [current, "Europe/Rome", "Europe/Madrid", "Europe/London", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Mexico_City", "America/Argentina/Buenos_Aires", "Asia/Tokyo", "Australia/Sydney"];
+  return [...new Set(common)];
+}

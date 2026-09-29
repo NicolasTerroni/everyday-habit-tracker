@@ -1,0 +1,51 @@
+{
+  "name": "everyday-habit-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:migrate:runtime": "node scripts/migrate.mjs",
+    "docker:init": "node scripts/init-docker-env.mjs",
+    "docker:up": "node scripts/docker-up.mjs",
+    "docker:logs": "docker compose --env-file .env.docker logs --follow app database",
+    "docker:down": "docker compose --env-file .env.docker down",
+    "qstash:setup": "node scripts/setup-qstash.mjs",
+    "vapid:generate": "web-push generate-vapid-keys"
+  },
+  "dependencies": {
+    "@upstash/qstash": "^2.8.4",
+    "better-auth": "^1.4.0",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "drizzle-orm": "^0.45.2",
+    "lucide-react": "^0.468.0",
+    "next": "^16.0.0",
+    "pg": "^8.16.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "web-push": "^3.6.7",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/web-push": "^3.6.4",
+    "drizzle-kit": "^0.31.0",
+    "dotenv": "^17.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "typescript": "^5.7.0"
+  }
+}

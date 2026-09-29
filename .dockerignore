@@ -1,0 +1,15 @@
+.git
+.next
+.vercel
+node_modules
+
+.env
+.env.*
+
+*.log
+*.md
+.DS_Store
+tsconfig.tsbuildinfo
+
+compose.yaml
+docs
