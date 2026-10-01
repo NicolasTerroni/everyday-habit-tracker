@@ -6,7 +6,7 @@ const habitBase = z.object({
   type: z.enum(["boolean", "quantity", "duration", "count"]),
   targetValue: z.coerce.number().positive().optional().nullable(),
   unit: z.string().trim().max(24).optional().nullable(),
-  icon: z.string().trim().min(1).max(12),
+  icon: z.string().trim().min(1).max(64),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/)
 });
 

@@ -29,12 +29,12 @@ If a free allowance is exhausted, these providers stop or suspend that resource 
 
 - Better Auth email/password authentication with 90-day sliding sessions.
 - User-scoped PostgreSQL queries for every owned record.
-- Habit creation, editing, ordering, archiving, and restoration.
+- Habit creation with any custom emoji, plus editing, ordering, archiving, and restoration.
 - Event-based entries with timestamps and notes; historical days remain editable.
 - Today view with one-tap boolean completion and fast numeric increments.
 - Month and full-year calendars with correct “habit did not exist” semantics.
 - 90-day overall, per-habit, quantitative, and weekday statistics.
-- Per-habit one-time or repeating reminders that stop when the target is met.
+- One-time per-device notification setup, with per-habit reminders that stop when the target is met.
 - A rolling one-year discipline heatmap based on daily target completion.
 - Idempotent notification executions and stale push-subscription cleanup.
 - Installable iPhone PWA, service worker shell cache, offline indicator, and dark mode.

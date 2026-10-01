@@ -16,6 +16,7 @@ import type { AppData, Entry, Habit, HabitType, Reminder } from "./types";
 
 type Tab = "today" | "calendar" | "insights" | "settings";
 type User = { name: string; email: string; timezone: string };
+type PushState = "checking" | "disconnected" | "ready" | "denied" | "unsupported" | "error";
 
 const COLORS = ["#7565d9", "#d96b5f", "#3f8f77", "#cf8b38", "#4e7cb8", "#9a5f90"];
 const ICONS = ["✨", "💧", "📚", "🏋️", "🧘", "🥗", "🌿", "✍️", "🚶", "💊", "🎸", "🇮🇹"];
@@ -75,6 +76,7 @@ export function HabitApp({ user: initialUser }: { user: User }) {
   const [menuHabit, setMenuHabit] = useState<Habit | null>(null);
   const [reminderHabit, setReminderHabit] = useState<Habit | null>(null);
   const [offline, setOffline] = useState(false);
+  const [pushState, setPushState] = useState<PushState>("checking");
 
   const range = useMemo(() => rangeFor(tab, cursor, selectedDate), [tab, cursor, selectedDate]);
   const load = useCallback(async () => {
@@ -88,17 +90,62 @@ export function HabitApp({ user: initialUser }: { user: User }) {
     } finally { setLoading(false); }
   }, [range.from, range.to, tab]);
 
+  const connectPush = useCallback(async (askPermission = true) => {
+    try {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+        setPushState("unsupported");
+        return false;
+      }
+      if (Notification.permission === "denied") {
+        setPushState("denied");
+        return false;
+      }
+      if (Notification.permission !== "granted") {
+        if (!askPermission) {
+          setPushState("disconnected");
+          return false;
+        }
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+          setPushState(permission === "denied" ? "denied" : "disconnected");
+          return false;
+        }
+      }
+
+      setPushState("checking");
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+        if (!publicKey) throw new Error("VAPID public key is not configured");
+        subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64(publicKey) });
+      }
+
+      await api("/api/push/subscribe", { method: "POST", body: JSON.stringify(subscription.toJSON()) });
+      setPushState("ready");
+      return true;
+    } catch {
+      setPushState("error");
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     const task = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(task);
   }, [load]);
   useEffect(() => {
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(console.error);
+    let pushTask: number | undefined;
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").then(() => connectPush(false)).catch(() => setPushState("error"));
+    } else {
+      pushTask = window.setTimeout(() => void connectPush(false), 0);
+    }
     const update = () => setOffline(!navigator.onLine);
     update();
     window.addEventListener("online", update); window.addEventListener("offline", update);
-    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
-  }, []);
+    return () => { if (pushTask !== undefined) window.clearTimeout(pushTask); window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, [connectPush]);
 
   const entriesFor = useCallback((habitId: string, date = selectedDate) =>
     (data?.entries || []).filter((entry) => entry.habitId === habitId && dateInTimezone(entry.timestamp, user.timezone) === date),
@@ -164,7 +211,7 @@ export function HabitApp({ user: initialUser }: { user: User }) {
 
         {tab === "calendar" && <CalendarView loading={loading} data={data} cursor={cursor} selectedDate={selectedDate} timezone={user.timezone} onCursor={setCursor} onDay={openDay} />}
         {tab === "insights" && <InsightsView loading={loading} data={data} timezone={user.timezone} onDay={openCalendar} />}
-        {tab === "settings" && <SettingsView user={user} habits={data?.habits || []} loading={loading} onUser={setUser} onChanged={load} />}
+        {tab === "settings" && <SettingsView user={user} habits={data?.habits || []} loading={loading} pushState={pushState} onConnectPush={() => connectPush(true)} onUser={setUser} onChanged={load} />}
       </section>
 
       <nav className="bottom-nav">{navItems.map((item) => <NavButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />)}</nav>
@@ -172,7 +219,7 @@ export function HabitApp({ user: initialUser }: { user: User }) {
       {habitModal && <HabitEditor habit={habitModal === "new" ? null : habitModal} onClose={() => setHabitModal(null)} onSaved={async () => { setHabitModal(null); await load(); }} />}
       {entryModal && <EntryEditor habit={entryModal} entries={entriesFor(entryModal.id)} onClose={() => setEntryModal(null)} onAdd={(value, note) => addEntry(entryModal, value, note)} onRemove={removeEntry} />}
       {menuHabit && <HabitMenu habit={menuHabit} entries={entriesFor(menuHabit.id)} onClose={() => setMenuHabit(null)} onEdit={() => { setHabitModal(menuHabit); setMenuHabit(null); }} onEntry={() => { setEntryModal(menuHabit); setMenuHabit(null); }} onReminder={() => { setReminderHabit(menuHabit); setMenuHabit(null); }} onChanged={load} />}
-      {reminderHabit && <ReminderEditor habit={reminderHabit} reminder={(data?.reminders || []).find((item) => item.habitId === reminderHabit.id)} onClose={() => setReminderHabit(null)} onSaved={async () => { setReminderHabit(null); await load(); }} />}
+      {reminderHabit && <ReminderEditor habit={reminderHabit} reminder={(data?.reminders || []).find((item) => item.habitId === reminderHabit.id)} pushState={pushState} onConnectPush={() => connectPush(true)} onClose={() => setReminderHabit(null)} onSaved={async () => { setReminderHabit(null); await load(); }} />}
     </main>
   );
 }
@@ -392,7 +439,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit | null; onClose
         ["boolean", Check, "Done or not"], ["quantity", Plus, "Add amounts"], ["duration", Clock3, "Track minutes"], ["count", BarChart3, "Count times"]
       ] as const).map(([value, Icon, caption]) => <button type="button" key={value} className={type === value ? "selected" : ""} onClick={() => setType(value)}><Icon size={18} /><strong>{value[0].toUpperCase() + value.slice(1)}</strong><small>{caption}</small></button>)}</div></fieldset>
       {type !== "boolean" && <div className="split-fields"><label>Daily target<input name="targetValue" type="number" min="0.001" step="any" required defaultValue={habit?.targetValue || (type === "duration" ? 30 : type === "count" ? 1 : 2000)} /></label><label>Unit<input name="unit" required maxLength={24} defaultValue={habit?.unit || (type === "duration" ? "min" : type === "count" ? "times" : "ml")} /></label></div>}
-      <fieldset><legend>Icon</legend><div className="icon-picker">{ICONS.map((value) => <button type="button" key={value} className={icon === value ? "selected" : ""} onClick={() => setIcon(value)}>{value}</button>)}</div></fieldset>
+      <fieldset><legend>Icon</legend><div className="icon-picker">{ICONS.map((value) => <button type="button" aria-label={`Use ${value}`} key={value} className={icon === value ? "selected" : ""} onClick={() => setIcon(value)}>{value}</button>)}</div><label className="custom-emoji">Any emoji<input value={icon} onChange={(event) => setIcon(event.target.value)} required maxLength={64} placeholder="Type or paste an emoji" /></label></fieldset>
       <fieldset><legend>Color</legend><div className="color-picker">{COLORS.map((value) => <button type="button" aria-label={value} key={value} className={color === value ? "selected" : ""} style={{ background: value }} onClick={() => setColor(value)}>{color === value && <Check size={14} />}</button>)}</div></fieldset>
       {error && <p className="form-error">{error}</p>}
       <button className="primary-button" disabled={busy}>{busy ? "Saving…" : habit ? "Save changes" : "Create habit"}</button>
@@ -441,25 +488,9 @@ function HabitMenu({ habit, entries, onClose, onEdit, onEntry, onReminder, onCha
   </Modal>;
 }
 
-function ReminderEditor({ habit, reminder, onClose, onSaved }: { habit: Habit; reminder?: Reminder; onClose: () => void; onSaved: () => void }) {
+function ReminderEditor({ habit, reminder, pushState, onConnectPush, onClose, onSaved }: { habit: Habit; reminder?: Reminder; pushState: PushState; onConnectPush: () => Promise<boolean>; onClose: () => void; onSaved: () => void }) {
   const [repeat, setRepeat] = useState(Boolean(reminder?.intervalMinutes));
   const [busy, setBusy] = useState(false);
-  const [pushState, setPushState] = useState<"idle" | "ready" | "error">("idle");
-
-  async function enablePush() {
-    try {
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) throw new Error("Push is not supported on this device");
-      const registration = await navigator.serviceWorker.ready;
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") throw new Error("Notification permission was not granted");
-      const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (!publicKey) throw new Error("VAPID public key is not configured");
-      const existing = await registration.pushManager.getSubscription();
-      const subscription = existing || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64(publicKey) });
-      await api("/api/push/subscribe", { method: "POST", body: JSON.stringify(subscription.toJSON()) });
-      setPushState("ready");
-    } catch { setPushState("error"); }
-  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true);
@@ -470,7 +501,7 @@ function ReminderEditor({ habit, reminder, onClose, onSaved }: { habit: Habit; r
   }
 
   return <Modal title={`Remind me about ${habit.name}`} eyebrow="WHEN IT'S STILL INCOMPLETE" onClose={onClose}>
-    <div className="push-callout"><Bell size={20} /><div><strong>First, connect this device</strong><p>On iPhone, install Everyday to your Home Screen before enabling notifications.</p></div><button type="button" onClick={enablePush}>{pushState === "ready" ? "Connected" : pushState === "error" ? "Try again" : "Enable"}</button></div>
+    {pushState !== "ready" && pushState !== "checking" && <div className="push-callout"><Bell size={20} /><div><strong>Enable notifications once</strong><p>{pushState === "denied" ? "Notifications are blocked in this browser. Allow them in the site settings, then try again." : pushState === "unsupported" ? "On iPhone, install Everyday to your Home Screen before enabling notifications." : "This device will stay connected for every habit reminder."}</p></div><button type="button" disabled={pushState === "denied" || pushState === "unsupported"} onClick={() => void onConnectPush()}>{pushState === "error" ? "Try again" : pushState === "denied" ? "Blocked" : pushState === "unsupported" ? "Unavailable" : "Enable"}</button></div>}
     <form className="form-stack editor-form" onSubmit={submit}>
       <label>First reminder<input type="time" name="startTime" required defaultValue={reminder?.startTime || "20:00"} /></label>
       <label className="toggle-row"><span><strong>Repeat during the day</strong><small>Stops as soon as the target is reached</small></span><input type="checkbox" checked={repeat} onChange={(event) => setRepeat(event.target.checked)} /></label>
@@ -488,7 +519,7 @@ function urlBase64(value: string) {
   const raw = atob(base64); return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
 }
 
-function SettingsView({ user, habits, loading, onUser, onChanged }: { user: User; habits: Habit[]; loading: boolean; onUser: (user: User) => void; onChanged: () => void }) {
+function SettingsView({ user, habits, loading, pushState, onConnectPush, onUser, onChanged }: { user: User; habits: Habit[]; loading: boolean; pushState: PushState; onConnectPush: () => Promise<boolean>; onUser: (user: User) => void; onChanged: () => void }) {
   const [dark, setDark] = useState(false);
   const [message, setMessage] = useState("");
   const archived = habits.filter((habit) => !habit.active);
@@ -506,9 +537,20 @@ function SettingsView({ user, habits, loading, onUser, onChanged }: { user: User
   }
 
   async function testPush() {
-    try { const result = await api<{ sent: number }>("/api/push/test", { method: "POST" }); setMessage(result.sent ? "Test notification sent" : "Connect notifications from a habit reminder first"); }
+    try { const result = await api<{ sent: number }>("/api/push/test", { method: "POST" }); setMessage(result.sent ? "Test notification sent" : "Connect notifications in Settings first"); }
     catch (cause) { setMessage(cause instanceof Error ? cause.message : "Test failed"); }
   }
+
+  async function setupNotifications() {
+    if (await onConnectPush()) setMessage("Notifications connected for every reminder on this device");
+  }
+
+  const notificationStatus = pushState === "ready" ? "Connected once for every reminder on this device"
+    : pushState === "checking" ? "Checking this device…"
+    : pushState === "denied" ? "Blocked by the browser; allow notifications in site settings"
+    : pushState === "unsupported" ? "Install the app to your Home Screen on iPhone first"
+    : pushState === "error" ? "Could not connect; tap to try again"
+    : "Enable once for every habit reminder";
 
   function toggleTheme() {
     const value = !dark; setDark(value); localStorage.setItem("everyday-theme", value ? "dark" : "light"); document.documentElement.dataset.theme = value ? "dark" : "light";
@@ -533,6 +575,7 @@ function SettingsView({ user, habits, loading, onUser, onChanged }: { user: User
     <section className="settings-card"><p className="eyebrow">PREFERENCES</p>
       <label className="settings-row"><span><strong>Timezone</strong><small>Controls “today” and reminder times</small></span><select value={user.timezone} onChange={(event) => void updateTimezone(event.target.value)}>{timezoneOptions(user.timezone).map((zone) => <option key={zone}>{zone}</option>)}</select></label>
       <label className="settings-row"><span><strong>Dark appearance</strong><small>Easy on the eyes at night</small></span><input type="checkbox" checked={dark} onChange={toggleTheme} /></label>
+      <button className={`settings-row ${pushState === "ready" ? "notification-ready" : ""}`} disabled={pushState === "checking" || pushState === "ready" || pushState === "unsupported"} onClick={() => void setupNotifications()}><span><strong>Notifications</strong><small>{notificationStatus}</small></span>{pushState === "checking" ? <LoaderCircle className="spin" size={19} /> : pushState === "ready" ? <Check size={19} /> : <Bell size={19} />}</button>
       <button className="settings-row" onClick={testPush}><span><strong>Test notifications</strong><small>Send a push to connected devices</small></span><Bell size={19} /></button>
     </section>
     <section className="settings-card"><p className="eyebrow">HABIT ORDER</p>
