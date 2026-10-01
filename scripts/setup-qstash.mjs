@@ -12,7 +12,7 @@ if (!token || !appUrl) {
 const client = new Client({ token });
 const result = await client.schedules.create({
   destination: `${appUrl}/api/cron/reminders`,
-  cron: "*/5 * * * *",
+  cron: "*/15 * * * *",
   scheduleId: "everyday-reminders",
   retries: 1
 });

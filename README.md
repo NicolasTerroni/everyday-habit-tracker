@@ -18,10 +18,10 @@ The original spec used separate Cloudflare frontend/API/cron services. This impl
 | --- | --- | --- |
 | App, API, service worker | Vercel Hobby | Deploys automatically from a personal GitHub repository |
 | PostgreSQL | Neon Free | Source of truth; the free plan is available without a payment method |
-| Scheduler | Upstash QStash Free | Calls the reminder engine every five minutes |
+| Scheduler | Upstash QStash Free | Calls the reminder engine every fifteen minutes |
 | Push delivery | Standards-based Web Push | No Apple Developer account or paid push service |
 
-QStash triggers 288 messages/day at a five-minute interval, below its 1,000 messages/day free allowance. No GitHub Actions runner or Vercel paid cron is needed. Vercel Hobby's native cron is intentionally not used because it permits only one run per day and does not offer precise timing.
+QStash triggers 96 messages/day at a fifteen-minute interval, below its 1,000 messages/day free allowance. No GitHub Actions runner or Vercel paid cron is needed. Vercel Hobby's native cron is intentionally not used because it permits only one run per day and does not offer precise timing.
 
 If a free allowance is exhausted, these providers stop or suspend that resource instead of charging a card that was never registered.
 
@@ -35,6 +35,7 @@ If a free allowance is exhausted, these providers stop or suspend that resource 
 - Month and full-year calendars with correct “habit did not exist” semantics.
 - 90-day overall, per-habit, quantitative, and weekday statistics.
 - Per-habit one-time or repeating reminders that stop when the target is met.
+- A rolling one-year discipline heatmap based on daily target completion.
 - Idempotent notification executions and stale push-subscription cleanup.
 - Installable iPhone PWA, service worker shell cache, offline indicator, and dark mode.
 
@@ -113,7 +114,7 @@ Create an Upstash account, open QStash, and copy the token plus both signing key
 - `QSTASH_CURRENT_SIGNING_KEY`
 - `QSTASH_NEXT_SIGNING_KEY`
 
-After redeploying, create the single five-minute schedule from your computer:
+After redeploying, create the single fifteen-minute schedule from your computer:
 
 ```bash
 QSTASH_TOKEN=your-token \
@@ -146,7 +147,7 @@ npm run docker:up       # build and start app + PostgreSQL
 npm run docker:logs     # follow container logs
 npm run docker:down     # stop containers and preserve data
 npm run vapid:generate  # create Web Push key pair
-npm run qstash:setup    # register/update the five-minute scheduler
+npm run qstash:setup    # register/update the fifteen-minute scheduler
 ```
 
 ## Security notes

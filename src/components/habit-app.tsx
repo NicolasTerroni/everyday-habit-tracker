@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addDays, addMonths, eachDayOfInterval, endOfMonth, endOfWeek,
   format, isSameMonth, parseISO, startOfMonth, startOfWeek, subDays, subMonths
@@ -19,6 +19,7 @@ type User = { name: string; email: string; timezone: string };
 
 const COLORS = ["#7565d9", "#d96b5f", "#3f8f77", "#cf8b38", "#4e7cb8", "#9a5f90"];
 const ICONS = ["✨", "💧", "📚", "🏋️", "🧘", "🥗", "🌿", "✍️", "🚶", "💊", "🎸", "🇮🇹"];
+const REMINDER_INTERVAL_HOURS = Array.from({ length: 12 }, (_, index) => index + 1);
 
 function localDate(date = new Date()) {
   const year = date.getFullYear();
@@ -56,7 +57,7 @@ function rangeFor(tab: Tab, cursor: Date, selectedDate: string) {
     return { from: localDate(startOfMonth(cursor)), to: localDate(endOfMonth(cursor)) };
   }
   if (tab === "insights") {
-    return { from: localDate(subDays(new Date(), 89)), to: localDate() };
+    return { from: localDate(subDays(new Date(), 370)), to: localDate() };
   }
   return { from: selectedDate, to: selectedDate };
 }
@@ -128,6 +129,10 @@ export function HabitApp({ user: initialUser }: { user: User }) {
     setSelectedDate(date); setTab("today");
   }
 
+  function openCalendar(date: string) {
+    setSelectedDate(date); setCursor(startOfMonth(parseISO(date))); setTab("calendar");
+  }
+
   const displayDate = parseISO(selectedDate);
   const isToday = selectedDate === localDate();
   const activeHabits = (data?.habits || []).filter((habit) => {
@@ -157,8 +162,8 @@ export function HabitApp({ user: initialUser }: { user: User }) {
           <button className="fab" onClick={() => setHabitModal("new")} aria-label="Create habit"><Plus size={24} /></button>
         </>}
 
-        {tab === "calendar" && <CalendarView loading={loading} data={data} cursor={cursor} timezone={user.timezone} onCursor={setCursor} onDay={openDay} />}
-        {tab === "insights" && <InsightsView loading={loading} data={data} timezone={user.timezone} />}
+        {tab === "calendar" && <CalendarView loading={loading} data={data} cursor={cursor} selectedDate={selectedDate} timezone={user.timezone} onCursor={setCursor} onDay={openDay} />}
+        {tab === "insights" && <InsightsView loading={loading} data={data} timezone={user.timezone} onDay={openCalendar} />}
         {tab === "settings" && <SettingsView user={user} habits={data?.habits || []} loading={loading} onUser={setUser} onChanged={load} />}
       </section>
 
@@ -230,8 +235,8 @@ function pretty(value: number) { return Number.isInteger(value) ? String(value) 
 function Loading() { return <div className="loading"><LoaderCircle className="spin" /><span>Opening your record…</span></div>; }
 function EmptyState({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) { return <div className="empty-state"><span>{icon}</span><h2>{title}</h2><p>{text}</p></div>; }
 
-function CalendarView({ loading, data, cursor, timezone, onCursor, onDay }: {
-  loading: boolean; data: AppData | null; cursor: Date; timezone: string; onCursor: (date: Date) => void; onDay: (date: string) => void;
+function CalendarView({ loading, data, cursor, selectedDate, timezone, onCursor, onDay }: {
+  loading: boolean; data: AppData | null; cursor: Date; selectedDate: string; timezone: string; onCursor: (date: Date) => void; onDay: (date: string) => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState<"month" | "year">("month");
@@ -268,7 +273,7 @@ function CalendarView({ loading, data, cursor, timezone, onCursor, onDay }: {
         <div className="week-labels">{["M", "T", "W", "T", "F", "S", "S"].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
         <div className="month-grid">{gridDays.map((day) => {
           const key = localDate(day); const ratio = completionFor(key); const future = key > localDate();
-          return <button key={key} disabled={future} className={`${!isSameMonth(day, cursor) ? "outside" : ""} ${key === localDate() ? "today" : ""}`} onClick={() => onDay(key)}><span>{format(day, "d")}</span>{ratio !== null && !future && <i className={ratio === 1 ? "full" : ""} style={{ "--ratio": ratio } as React.CSSProperties} />}</button>;
+          return <button key={key} disabled={future} className={`${!isSameMonth(day, cursor) ? "outside" : ""} ${key === localDate() ? "today" : ""} ${key === selectedDate ? "selected" : ""}`} onClick={() => onDay(key)}><span>{format(day, "d")}</span>{ratio !== null && !future && <i className={ratio === 1 ? "full" : ""} style={{ "--ratio": ratio } as React.CSSProperties} />}</button>;
         })}</div>
         <footer><span><i className="legend empty" /> Not done</span><span><i className="legend partial" /> Some</span><span><i className="legend full" /> Complete</span></footer>
       </section> : <section className="year-card"><h2>{cursor.getFullYear()}</h2><div className="year-grid">{Array.from({ length: 12 }, (_, month) => {
@@ -282,8 +287,19 @@ function CalendarView({ loading, data, cursor, timezone, onCursor, onDay }: {
   </>;
 }
 
-function InsightsView({ loading, data, timezone }: { loading: boolean; data: AppData | null; timezone: string }) {
+function InsightsView({ loading, data, timezone, onDay }: { loading: boolean; data: AppData | null; timezone: string; onDay: (date: string) => void }) {
   const days = useMemo(() => eachDayOfInterval({ start: subDays(new Date(), 89), end: new Date() }), []);
+  const heatmapStart = useMemo(() => subDays(new Date(), 364), []);
+  const heatmapDays = useMemo(() => eachDayOfInterval({ start: startOfWeek(heatmapStart, { weekStartsOn: 1 }), end: new Date() }), [heatmapStart]);
+  const heatmapScroll = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const scroller = heatmapScroll.current;
+    if (!scroller) return;
+    const frame = window.requestAnimationFrame(() => {
+      scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [data?.from, data?.to]);
   if (loading) return <><PageHeader eyebrow="PATTERNS" title="Your insights" subtitle="Description, not judgment." /><Loading /></>;
   if (!data?.habits.length) return <><PageHeader eyebrow="PATTERNS" title="Your insights" subtitle="Description, not judgment." /><EmptyState icon={<BarChart3 />} title="Patterns take time" text="Once you have a few entries, useful patterns will live here." /></>;
 
@@ -291,10 +307,28 @@ function InsightsView({ loading, data, timezone }: { loading: boolean; data: App
     const date = localDate(day);
     return date >= dateInTimezone(habit.createdAt, timezone) && (!habit.archivedAt || date <= dateInTimezone(habit.archivedAt, timezone));
   };
+  const entriesByHabitDay = new Map<string, Entry[]>();
+  for (const entry of data.entries) {
+    const key = `${entry.habitId}:${dateInTimezone(entry.timestamp, timezone)}`;
+    entriesByHabitDay.set(key, [...(entriesByHabitDay.get(key) || []), entry]);
+  }
+  const entriesOn = (habit: Habit, date: string) => entriesByHabitDay.get(`${habit.id}:${date}`) || [];
+  const heatmapStartKey = localDate(heatmapStart);
+  const heatmap = heatmapDays.map((day) => {
+    const date = localDate(day);
+    if (date < heatmapStartKey) return { day, date, eligible: 0, complete: 0, ratio: null };
+    const eligible = data.habits.filter((habit) => eligibleFor(habit, day));
+    const complete = eligible.filter((habit) => isComplete(habit, entriesOn(habit, date))).length;
+    return { day, date, eligible: eligible.length, complete, ratio: eligible.length ? complete / eligible.length : null };
+  });
+  const heatmapWeeks = Array.from({ length: Math.ceil(heatmap.length / 7) }, (_, index) => heatmap.slice(index * 7, index * 7 + 7));
+  const measuredDays = heatmap.filter((day) => day.date >= heatmapStartKey && day.ratio !== null);
+  const disciplinedDays = measuredDays.filter((day) => day.ratio === 1).length;
+  const yearlyAverage = measuredDays.length ? measuredDays.reduce((sum, day) => sum + (day.ratio || 0), 0) / measuredDays.length : 0;
   const metrics = data.habits.map((habit) => {
     const eligible = days.filter((day) => eligibleFor(habit, day));
-    const complete = eligible.filter((day) => isComplete(habit, data.entries.filter((entry) => entry.habitId === habit.id && dateInTimezone(entry.timestamp, timezone) === localDate(day))));
-    const total = data.entries.filter((entry) => entry.habitId === habit.id).reduce((sum, entry) => sum + Number(entry.value), 0);
+    const complete = eligible.filter((day) => isComplete(habit, entriesOn(habit, localDate(day))));
+    const total = days.flatMap((day) => entriesOn(habit, localDate(day))).reduce((sum, entry) => sum + Number(entry.value), 0);
     return { habit, eligible: eligible.length, complete: complete.length, rate: eligible.length ? complete.length / eligible.length : 0, average: eligible.length ? total / eligible.length : 0 };
   });
   const overall = metrics.reduce((sum, metric) => sum + metric.complete, 0) / Math.max(1, metrics.reduce((sum, metric) => sum + metric.eligible, 0));
@@ -302,14 +336,30 @@ function InsightsView({ loading, data, timezone }: { loading: boolean; data: App
     const matching = days.filter((day) => (day.getDay() + 6) % 7 === weekday);
     let possible = 0; let complete = 0;
     for (const day of matching) for (const habit of data.habits) if (eligibleFor(habit, day)) {
-      possible++; if (isComplete(habit, data.entries.filter((entry) => entry.habitId === habit.id && dateInTimezone(entry.timestamp, timezone) === localDate(day)))) complete++;
+      possible++; if (isComplete(habit, entriesOn(habit, localDate(day)))) complete++;
     }
     return possible ? complete / possible : 0;
   });
 
   return <>
-    <PageHeader eyebrow="LAST 90 DAYS" title="Your insights" subtitle="Look for patterns, not perfection." />
-    <div className="insight-hero"><div className="ring" style={{ "--percent": overall * 100 } as React.CSSProperties}><span>{Math.round(overall * 100)}<small>%</small></span></div><div><p className="eyebrow">OVERALL COMPLETION</p><h2>{overall >= .8 ? "A steady rhythm." : overall >= .5 ? "A rhythm is forming." : "Every entry counts."}</h2><p>Across days when each habit existed.</p></div></div>
+    <PageHeader eyebrow="PATTERNS" title="Your insights" subtitle="Look for patterns, not perfection." />
+    <section className="insight-card discipline-card">
+      <header><div><p className="eyebrow">LAST 365 DAYS</p><h2>Your discipline over time</h2></div><div className="discipline-summary"><strong>{disciplinedDays}</strong><span>fully completed days</span><small>{Math.round(yearlyAverage * 100)}% average completion</small></div></header>
+      <div className="discipline-scroll" ref={heatmapScroll}><div className="discipline-map">
+        <div className="discipline-months">{heatmapWeeks.map((week, index) => {
+          const firstVisible = week.find((item) => item.date >= heatmapStartKey);
+          const monthStart = week.find((item) => item.date >= heatmapStartKey && item.day.getDate() === 1);
+          return <span key={index}>{monthStart ? format(monthStart.day, "MMM") : index === 0 && firstVisible ? format(firstVisible.day, "MMM") : ""}</span>;
+        })}</div>
+        <div className="discipline-layout"><div className="discipline-weekdays">{["M", "", "W", "", "F", "", ""].map((label, index) => <span key={index}>{label}</span>)}</div><div className="discipline-grid">{heatmap.map((item) => {
+          const level = item.ratio === null ? "none" : item.ratio === 0 ? "level-0" : item.ratio <= .25 ? "level-1" : item.ratio <= .5 ? "level-2" : item.ratio < 1 ? "level-3" : "level-4";
+          const label = item.ratio === null ? `${format(item.day, "MMMM d, yyyy")}: no active habits` : `${format(item.day, "MMMM d, yyyy")}: ${item.complete} of ${item.eligible} habits completed (${Math.round(item.ratio * 100)}%)`;
+          return <button key={item.date} type="button" className={`${level} ${item.date === localDate() ? "today" : ""}`} disabled={item.ratio === null} title={label} aria-label={label} onClick={() => onDay(item.date)} />;
+        })}</div></div>
+      </div></div>
+      <footer className="discipline-legend"><span>Less</span>{[0, 1, 2, 3, 4].map((level) => <i key={level} className={`level-${level}`} />)}<span>More</span></footer>
+    </section>
+    <div className="insight-hero"><div className="ring" style={{ "--percent": overall * 100 } as React.CSSProperties}><span>{Math.round(overall * 100)}<small>%</small></span></div><div><p className="eyebrow">LAST 90 DAYS</p><h2>{overall >= .8 ? "A steady rhythm." : overall >= .5 ? "A rhythm is forming." : "Every entry counts."}</h2><p>Across days when each habit existed.</p></div></div>
     <section className="insight-card"><header><div><p className="eyebrow">BY HABIT</p><h2>How each habit is going</h2></div></header><div className="metric-list">{metrics.map(({ habit, complete, eligible, rate, average }) => <div key={habit.id}><span className="habit-icon small">{habit.icon}</span><div><strong>{habit.name}</strong><i><b style={{ width: `${rate * 100}%`, background: habit.color }} /></i></div><span>{habit.type === "boolean" ? `${complete}/${eligible}` : `${pretty(average)} ${habit.unit}/day`}<small>{Math.round(rate * 100)}%</small></span></div>)}</div></section>
     <section className="insight-card"><header><div><p className="eyebrow">BY WEEKDAY</p><h2>Your weekly rhythm</h2></div></header><div className="weekday-chart">{weekdays.map((value, index) => <div key={index}><span>{Math.round(value * 100)}%</span><i><b style={{ height: `${Math.max(4, value * 100)}%` }} /></i><small>{["M", "T", "W", "T", "F", "S", "S"][index]}</small></div>)}</div></section>
   </>;
@@ -424,7 +474,7 @@ function ReminderEditor({ habit, reminder, onClose, onSaved }: { habit: Habit; r
     <form className="form-stack editor-form" onSubmit={submit}>
       <label>First reminder<input type="time" name="startTime" required defaultValue={reminder?.startTime || "20:00"} /></label>
       <label className="toggle-row"><span><strong>Repeat during the day</strong><small>Stops as soon as the target is reached</small></span><input type="checkbox" checked={repeat} onChange={(event) => setRepeat(event.target.checked)} /></label>
-      {repeat && <div className="split-fields"><label>Until<input type="time" name="endTime" required defaultValue={reminder?.endTime || "21:00"} /></label><label>Every<select name="intervalMinutes" defaultValue={reminder?.intervalMinutes || 180}><option value="60">1 hour</option><option value="120">2 hours</option><option value="180">3 hours</option><option value="240">4 hours</option></select></label></div>}
+      {repeat && <div className="split-fields"><label>Until<input type="time" name="endTime" required defaultValue={reminder?.endTime || "21:00"} /></label><label>Every<select name="intervalMinutes" defaultValue={reminder?.intervalMinutes || 180}>{REMINDER_INTERVAL_HOURS.map((hours) => <option key={hours} value={hours * 60}>{hours} {hours === 1 ? "hour" : "hours"}</option>)}</select></label></div>}
       <p className="helper-text">A reminder is recorded once per scheduled slot, so retries can never create duplicates.</p>
       <button className="primary-button" disabled={busy}>{busy ? "Saving…" : "Save reminder"}</button>
       {reminder && <button type="button" className="danger-button" onClick={async () => { await api(`/api/reminders/${reminder.id}`, { method: "DELETE" }); onSaved(); }}>Delete reminder</button>}

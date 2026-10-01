@@ -4,6 +4,8 @@ import { habitEntries, habits, notificationExecutions, reminders, user } from "@
 import { dateAtLocalTime, dayBounds, minuteIn, todayIn } from "@/lib/dates";
 import { sendPushToUser } from "@/lib/push";
 
+const REMINDER_GRACE_MINUTES = 20;
+
 function minutes(value: string) {
   const [hours, mins] = value.split(":").map(Number);
   return hours * 60 + mins;
@@ -38,11 +40,11 @@ export async function runReminderEngine(now = new Date()) {
     const currentMinute = minutes(minuteIn(now, row.timezone));
     const start = minutes(row.startTime);
     const end = row.endTime ? minutes(row.endTime) : start;
-    if (currentMinute < start || currentMinute > end + 10) continue;
+    if (currentMinute < start || currentMinute > end + REMINDER_GRACE_MINUTES) continue;
 
     const interval = row.intervalMinutes || 1440;
     const slotMinute = start + Math.floor((Math.min(currentMinute, end) - start) / interval) * interval;
-    if (slotMinute < start || slotMinute > end || currentMinute - slotMinute > 10) continue;
+    if (slotMinute < start || slotMinute > end || currentMinute - slotMinute > REMINDER_GRACE_MINUTES) continue;
     const scheduledFor = dateAtLocalTime(date, timeFromMinutes(slotMinute), row.timezone);
 
     const [claim] = await db.insert(notificationExecutions).values({

@@ -58,7 +58,7 @@ The implementation uses a single Vercel deployment because:
 2. Next.js App Router already provides server routes, rendering, authentication integration, and PWA assets in one project.
 3. A separate Worker would add deployment, CORS, cookie-domain, and observability complexity without improving a personal V1.
 4. Vercel Hobby cron cannot support frequent reminders: it runs at most once daily and has low timing precision.
-5. QStash Free can call one signed endpoint every five minutes. This uses 288 of the current 1,000 free daily messages.
+5. QStash Free can call one signed endpoint every fifteen minutes. This uses 96 of the current 1,000 free daily messages.
 
 The product model did not change: PostgreSQL owns data, reminders are derived from entries, all entities are scoped to a user, and historical events are preserved.
 
@@ -116,7 +116,7 @@ public/
   icon*.svg                PWA icons
 drizzle/                   Committed SQL migrations and snapshots
 scripts/
-  setup-qstash.mjs         Creates or updates the five-minute schedule
+  setup-qstash.mjs         Creates or updates the fifteen-minute schedule
 ```
 
 ## 6. Data model and invariants
@@ -184,7 +184,7 @@ Habit update validation deliberately has no defaults. Defaults belong only to cr
 
 ## 9. Reminder-engine behavior
 
-QStash calls `/api/cron/reminders` every five minutes. The handler verifies QStash's signature before doing work.
+QStash calls `/api/cron/reminders` every fifteen minutes. The handler verifies QStash's signature before doing work. A twenty-minute grace window prevents a slot from being missed because of scheduler jitter or a cold start.
 
 For every enabled reminder:
 
@@ -363,7 +363,7 @@ APP_URL=https://your-project.vercel.app \
 npm run qstash:setup
 ```
 
-The command creates or replaces the stable schedule ID `everyday-reminders` with `*/5 * * * *`.
+The command creates or replaces the stable schedule ID `everyday-reminders` with `*/15 * * * *`.
 
 ### Step 6: production smoke test
 
@@ -384,7 +384,7 @@ Verify all of the following:
 ## 15. Operational considerations
 
 - Free plans have hard limits. With one personal user, expected use is far below them.
-- QStash's five-minute evaluation means reminders can arrive several minutes after their configured time.
+- QStash's fifteen-minute evaluation means reminders can arrive up to about fifteen minutes after their configured time.
 - The application logs push failures to the platform log and records execution status, but has no alerting dashboard yet.
 - Stale push endpoints returning HTTP 404/410 are removed automatically.
 - Database backups and point-in-time recovery depend on the selected Neon plan.
