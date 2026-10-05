@@ -39,7 +39,7 @@ If a free allowance is exhausted, these providers stop or suspend that resource 
 - One-time per-device notification setup, with per-habit reminders that stop when the target is met.
 - A rolling one-year discipline heatmap based on daily target completion.
 - Idempotent notification executions and stale push-subscription cleanup.
-- Optional read-only integration endpoint (`/api/integration/habits`) for a personal bot or script, authenticated by a bearer token.
+- Optional integration endpoints for a personal bot or script, authenticated by a bearer token: read habits and entries (`/api/integration/habits`), log or undo an entry (`/api/integration/entries`).
 - Installable iPhone PWA, service worker shell cache, offline indicator, and dark mode.
 
 ## Local setup
@@ -137,7 +137,7 @@ To receive it by email instead, still on a free plan:
 2. In Vercel, add `RESEND_API_KEY`, and optionally `EMAIL_FROM` (default `Everyday <onboarding@resend.dev>`). Redeploy.
 3. Without a verified domain, Resend's test sender delivers only to the email of your Resend account, which is enough for a personal app. Verify a domain to send to anyone.
 
-## Integration endpoint (optional)
+## Integration endpoints (optional)
 
 `GET /api/integration/habits?from=YYYY-MM-DD&to=YYYY-MM-DD` returns the same habits, entries and reminders as the app (archived habits included, up to 400 days) to a script that has no browser session, for example a Telegram bot that tracks consistency.
 
@@ -148,7 +148,9 @@ To receive it by email instead, still on a free plan:
    ```
 
 2. In Vercel, add `INTEGRATION_TOKEN_SHA256` (the hex digest, not the token) and `INTEGRATION_USER_EMAIL` (the account to read). Redeploy.
-3. Call it with `Authorization: Bearer <token>`. Without both variables the route answers 404.
+3. Call it with `Authorization: Bearer <token>`. Without both variables the routes answer 404.
+
+`POST /api/integration/entries` with `{ "habitId": "…", "value": 250, "note": "…" }` logs an entry (value defaults to 1, time to now; a yes/no habit keeps one entry per day). `DELETE /api/integration/entries?id=…` removes one.
 
 ## Install and enable push on iPhone
 
@@ -184,5 +186,5 @@ npm run qstash:setup    # register/update the fifteen-minute scheduler
 - VAPID private keys, database credentials, and QStash signing keys stay server-side.
 - The service worker never caches authenticated API responses.
 - Password reset tokens are random, single-use, expire after 1 hour, and are removed from the address bar once the page loads; a successful reset revokes every session. The request endpoint answers the same way whether or not the email exists.
-- The integration endpoint is read-only and serves a single account. Vercel stores only the token's SHA-256, compared in constant time, so the environment variable alone cannot call it.
+- The integration endpoints serve a single account and can only read data and add or remove entries. Vercel stores only the token's SHA-256, compared in constant time, so the environment variable alone cannot call it.
 - `npm audit` currently reports a moderate development-only advisory in Drizzle Kit's legacy `esbuild` loader. The suggested automatic fix is an incompatible Drizzle downgrade; the affected dev server is not shipped in the Vercel runtime.
