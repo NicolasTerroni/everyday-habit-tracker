@@ -20,6 +20,7 @@ The original spec used separate Cloudflare frontend/API/cron services. This impl
 | PostgreSQL | Neon Free | Source of truth; the free plan is available without a payment method |
 | Scheduler | Upstash QStash Free | Calls the reminder engine every fifteen minutes |
 | Push delivery | Standards-based Web Push | No Apple Developer account or paid push service |
+| Password reset email (optional) | Resend Free | Sends the reset link; without it, the link is written to the server log |
 
 QStash triggers 96 messages/day at a fifteen-minute interval, below its 1,000 messages/day free allowance. No GitHub Actions runner or Vercel paid cron is needed. Vercel Hobby's native cron is intentionally not used because it permits only one run per day and does not offer precise timing.
 
@@ -28,6 +29,7 @@ If a free allowance is exhausted, these providers stop or suspend that resource 
 ## Features implemented
 
 - Better Auth email/password authentication with 90-day sliding sessions.
+- "Forgot your password?": a single-use reset link valid for 1 hour, sent by email (Resend) or written to the server log when email isn't configured. Resetting signs out every other session.
 - User-scoped PostgreSQL queries for every owned record.
 - Habit creation with any custom emoji, plus editing, ordering, archiving, and restoration.
 - Event-based entries with timestamps and notes; historical days remain editable.
@@ -124,6 +126,16 @@ npm run qstash:setup
 
 The endpoint verifies QStash signatures. Each run evaluates all enabled reminders in the user's timezone, derives completion from that day's entries, claims a unique `(reminder_id, scheduled_for)` execution, and only then sends Web Push.
 
+## Password reset email (optional)
+
+"Forgot your password?" works without any email service: the reset link is written to the server log, so on Vercel open **Logs**, search for `[email]`, and open the link within 1 hour.
+
+To receive it by email instead, still on a free plan:
+
+1. Create a Resend account (free, no card) and an API key.
+2. In Vercel, add `RESEND_API_KEY`, and optionally `EMAIL_FROM` (default `Everyday <onboarding@resend.dev>`). Redeploy.
+3. Without a verified domain, Resend's test sender delivers only to the email of your Resend account, which is enough for a personal app. Verify a domain to send to anyone.
+
 ## Install and enable push on iPhone
 
 1. Open the production URL in Safari on iOS 16.4 or newer.
@@ -157,4 +169,5 @@ npm run qstash:setup    # register/update the fifteen-minute scheduler
 - The API obtains `userId` from the session and never trusts one sent by the client.
 - VAPID private keys, database credentials, and QStash signing keys stay server-side.
 - The service worker never caches authenticated API responses.
+- Password reset tokens are random, single-use, expire after 1 hour, and are removed from the address bar once the page loads; a successful reset revokes every session. The request endpoint answers the same way whether or not the email exists.
 - `npm audit` currently reports a moderate development-only advisory in Drizzle Kit's legacy `esbuild` loader. The suggested automatic fix is an incompatible Drizzle downgrade; the affected dev server is not shipped in the Vercel runtime.

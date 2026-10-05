@@ -3,6 +3,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
+import { passwordResetEmail, sendEmail } from "@/lib/email";
 
 export const auth = betterAuth({
   appName: "Everyday",
@@ -18,7 +19,13 @@ export const auth = betterAuth({
     enabled: true,
     autoSignIn: true,
     minPasswordLength: 8,
-    maxPasswordLength: 128
+    maxPasswordLength: 128,
+    // "Forgot password": the token lives in the existing verification table, works once and expires in 1 hour.
+    resetPasswordTokenExpiresIn: 60 * 60,
+    revokeSessionsOnPasswordReset: true,
+    sendResetPassword: async ({ user, url }) => {
+      await sendEmail({ to: user.email, ...passwordResetEmail(user.name, url) });
+    }
   },
   user: {
     additionalFields: {

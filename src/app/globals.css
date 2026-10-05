@@ -72,7 +72,9 @@ h1, h2 { font-family: var(--font-serif), serif; letter-spacing: -.035em; }
 .primary-button:disabled { opacity: .55; cursor: wait; }
 .text-button { border: 0; background: transparent; color: var(--accent); font-weight: 700; cursor: pointer; }
 .auth-switch { width: 100%; padding: 22px; }
+.auth-forgot { display: block; margin: 16px auto 0; font-size: .85rem; font-weight: 600; }
 .form-error { margin: -6px 0 0; padding: 10px 12px; border-radius: 9px; background: #fbecea; color: var(--danger); font-size: .82rem; }
+.form-notice { margin: -6px 0 0; padding: 10px 12px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--ink, inherit); font-size: .82rem; }
 
 /* Application shell */
 .app-frame { min-height: 100dvh; }
