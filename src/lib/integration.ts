@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { user } from "@/db/schema";
+import { asLockRule } from "@/lib/focus-lock";
 
 // A personal integration (e.g. a Telegram bot) acts for one account without a browser session.
 // Vercel stores only the token's SHA-256, so the env var alone cannot be used to call these routes.
@@ -22,9 +23,9 @@ export async function integrationOwner(request: NextRequest) {
     return { error: NextResponse.json({ error: "Integration is not configured" }, { status: 404 }) };
   }
   if (!tokenMatches(request)) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  const [owner] = await db.select({ id: user.id, timezone: user.timezone }).from(user).where(eq(user.email, email)).limit(1);
+  const [owner] = await db.select({ id: user.id, timezone: user.timezone, lockRule: user.lockRule }).from(user).where(eq(user.email, email)).limit(1);
   if (!owner) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  return { owner: { id: owner.id, timezone: owner.timezone || "Europe/Rome" } };
+  return { owner: { id: owner.id, timezone: owner.timezone || "Europe/Rome", lockRule: asLockRule(owner.lockRule) } };
 }
 
 export function integrationError(error: unknown) {

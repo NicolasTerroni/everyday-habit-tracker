@@ -7,15 +7,16 @@ import {
 } from "date-fns";
 import {
   Archive, BarChart3, Bell, CalendarDays, Check, ChevronLeft, ChevronRight,
-  ArrowDown, ArrowUp, Circle, Clock3, Home, LoaderCircle, Minus, MoreHorizontal, Plus, RotateCcw,
+  ArrowDown, ArrowUp, Circle, Clock3, Home, LoaderCircle, Lock, LockOpen, Minus, MoreHorizontal, Plus, RotateCcw,
   Settings, Sparkles
 } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
+import { isHabitComplete as isComplete, LOCK_RULE_LABELS, LOCK_RULES, lockStatus, type LockRule } from "@/lib/focus-lock";
 import { Modal } from "./modal";
 import type { AppData, Entry, Habit, HabitType, Reminder } from "./types";
 
 type Tab = "today" | "calendar" | "insights" | "settings";
-type User = { name: string; email: string; timezone: string };
+type User = { name: string; email: string; timezone: string; lockRule: LockRule };
 type PushState = "checking" | "disconnected" | "ready" | "denied" | "unsupported" | "error";
 
 const COLORS = ["#7565d9", "#d96b5f", "#3f8f77", "#cf8b38", "#4e7cb8", "#9a5f90"];
@@ -205,7 +206,7 @@ export function HabitApp({ user: initialUser }: { user: User }) {
             {!isToday && <button className="text-button" onClick={() => setSelectedDate(localDate())}>Today</button>}
             <button className="date-step" disabled={isToday} onClick={() => setSelectedDate(localDate(addDays(displayDate, 1)))}><ChevronRight size={18} /></button>
           </PageHeader>
-          <TodayView loading={loading} habits={activeHabits} entriesFor={entriesFor} onToggle={toggleBoolean} onAdd={(habit) => setEntryModal(habit)} onMenu={setMenuHabit} />
+          <TodayView loading={loading} habits={activeHabits} lockRule={isToday ? user.lockRule : "off"} entriesFor={entriesFor} onToggle={toggleBoolean} onAdd={(habit) => setEntryModal(habit)} onMenu={setMenuHabit} />
           <button className="fab" onClick={() => setHabitModal("new")} aria-label="Create habit"><Plus size={24} /></button>
         </>}
 
@@ -245,14 +246,16 @@ function greeting() {
   return hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
 }
 
-function TodayView({ loading, habits, entriesFor, onToggle, onAdd, onMenu }: {
-  loading: boolean; habits: Habit[]; entriesFor: (id: string) => Entry[];
+function TodayView({ loading, habits, lockRule, entriesFor, onToggle, onAdd, onMenu }: {
+  loading: boolean; habits: Habit[]; lockRule: LockRule; entriesFor: (id: string) => Entry[];
   onToggle: (habit: Habit) => void; onAdd: (habit: Habit) => void; onMenu: (habit: Habit) => void;
 }) {
   if (loading) return <Loading />;
   if (!habits.length) return <EmptyState icon={<Sparkles />} title="A blank page" text="Create your first habit and begin a record that belongs only to you." />;
   const complete = habits.filter((habit) => isComplete(habit, entriesFor(habit.id))).length;
+  const lock = lockRule === "off" ? null : lockStatus(lockRule, habits, habits.flatMap((habit) => entriesFor(habit.id)));
   return <div className="today-wrap">
+    {lock && <div className={`lock-banner ${lock.locked ? "" : "unlocked"}`}>{lock.locked ? <Lock size={17} /> : <LockOpen size={17} />}<span><strong>{lock.locked ? "Apps locked" : "Apps unlocked"}</strong><small>{lock.locked ? lock.message.replace("Locked: ", "To unlock, ") : "You've earned your free time today"}</small></span></div>}
     <div className="day-progress"><div><span>{complete}</span> of {habits.length} complete</div><div className="progress-track"><i style={{ width: `${habits.length ? complete / habits.length * 100 : 0}%` }} /></div></div>
     <div className="habit-list">{habits.map((habit) => <HabitCard key={habit.id} habit={habit} entries={entriesFor(habit.id)} onToggle={() => onToggle(habit)} onAdd={() => onAdd(habit)} onMenu={() => onMenu(habit)} />)}</div>
   </div>;
@@ -265,16 +268,11 @@ function HabitCard({ habit, entries, onToggle, onAdd, onMenu }: { habit: Habit; 
   return <article className={`habit-card ${completed ? "complete" : ""}`} style={{ "--habit": habit.color } as React.CSSProperties}>
     <button className="habit-main" onClick={habit.type === "boolean" ? onToggle : onAdd}>
       <span className="habit-icon">{habit.icon}</span>
-      <span className="habit-copy"><strong>{habit.name}</strong><small>{habit.type === "boolean" ? (completed ? "Completed" : "Not completed") : `${pretty(total)} / ${pretty(Number(habit.targetValue))} ${habit.unit}`}</small>{habit.type !== "boolean" && <i><b style={{ width: `${percent}%` }} /></i>}</span>
+      <span className="habit-copy"><strong>{habit.name}{habit.nonNegotiable && <Lock className="non-negotiable-mark" size={12} aria-label="Non-negotiable" />}</strong><small>{habit.type === "boolean" ? (completed ? "Completed" : "Not completed") : `${pretty(total)} / ${pretty(Number(habit.targetValue))} ${habit.unit}`}</small>{habit.type !== "boolean" && <i><b style={{ width: `${percent}%` }} /></i>}</span>
       {habit.type === "boolean" ? <span className={`check-control ${completed ? "checked" : ""}`}>{completed ? <Check size={18} /> : <Circle size={21} />}</span> : <span className="add-control"><Plus size={19} /></span>}
     </button>
     <button className="more-button" aria-label={`More actions for ${habit.name}`} onClick={onMenu}><MoreHorizontal size={20} /></button>
   </article>;
-}
-
-function isComplete(habit: Habit, entries: Entry[]) {
-  if (habit.type === "boolean") return entries.length > 0;
-  return entries.reduce((sum, entry) => sum + Number(entry.value), 0) >= Number(habit.targetValue || 0);
 }
 
 function pretty(value: number) { return Number.isInteger(value) ? String(value) : value.toLocaleString(undefined, { maximumFractionDigits: 2 }); }
@@ -416,6 +414,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit | null; onClose
   const [type, setType] = useState<HabitType>(habit?.type || "boolean");
   const [color, setColor] = useState(habit?.color || COLORS[0]);
   const [icon, setIcon] = useState(habit?.icon || ICONS[0]);
+  const [nonNegotiable, setNonNegotiable] = useState(habit?.nonNegotiable || false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -425,7 +424,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit | null; onClose
     const body = {
       name: form.get("name"), description: form.get("description") || null, type,
       targetValue: type === "boolean" ? null : Number(form.get("targetValue")),
-      unit: type === "boolean" ? null : form.get("unit"), icon, color
+      unit: type === "boolean" ? null : form.get("unit"), icon, color, nonNegotiable
     };
     try { await api(habit ? `/api/habits/${habit.id}` : "/api/habits", { method: habit ? "PATCH" : "POST", body: JSON.stringify(body) }); onSaved(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save habit"); setBusy(false); }
@@ -441,6 +440,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit | null; onClose
       {type !== "boolean" && <div className="split-fields"><label>Daily target<input name="targetValue" type="number" min="0.001" step="any" required defaultValue={habit?.targetValue || (type === "duration" ? 30 : type === "count" ? 1 : 2000)} /></label><label>Unit<input name="unit" required maxLength={24} defaultValue={habit?.unit || (type === "duration" ? "min" : type === "count" ? "times" : "ml")} /></label></div>}
       <fieldset><legend>Icon</legend><div className="icon-picker">{ICONS.map((value) => <button type="button" aria-label={`Use ${value}`} key={value} className={icon === value ? "selected" : ""} onClick={() => setIcon(value)}>{value}</button>)}</div><label className="custom-emoji">Any emoji<input value={icon} onChange={(event) => setIcon(event.target.value)} required maxLength={64} placeholder="Type or paste an emoji" /></label></fieldset>
       <fieldset><legend>Color</legend><div className="color-picker">{COLORS.map((value) => <button type="button" aria-label={value} key={value} className={color === value ? "selected" : ""} style={{ background: value }} onClick={() => setColor(value)}>{color === value && <Check size={14} />}</button>)}</div></fieldset>
+      <label className="toggle-row"><span><strong>Non-negotiable</strong><small>Must be done before your apps unlock</small></span><input type="checkbox" checked={nonNegotiable} onChange={(event) => setNonNegotiable(event.target.checked)} /></label>
       {error && <p className="form-error">{error}</p>}
       <button className="primary-button" disabled={busy}>{busy ? "Saving…" : habit ? "Save changes" : "Create habit"}</button>
     </form>
@@ -536,6 +536,11 @@ function SettingsView({ user, habits, loading, pushState, onConnectPush, onUser,
     onUser({ ...user, timezone }); setMessage("Timezone updated");
   }
 
+  async function updateLockRule(lockRule: LockRule) {
+    await api("/api/profile", { method: "PATCH", body: JSON.stringify({ lockRule }) });
+    onUser({ ...user, lockRule }); setMessage(lockRule === "off" ? "Focus lock turned off" : "Focus lock updated");
+  }
+
   async function testPush() {
     try { const result = await api<{ sent: number }>("/api/push/test", { method: "POST" }); setMessage(result.sent ? "Test notification sent" : "Connect notifications in Settings first"); }
     catch (cause) { setMessage(cause instanceof Error ? cause.message : "Test failed"); }
@@ -577,6 +582,10 @@ function SettingsView({ user, habits, loading, pushState, onConnectPush, onUser,
       <label className="settings-row"><span><strong>Dark appearance</strong><small>Easy on the eyes at night</small></span><input type="checkbox" checked={dark} onChange={toggleTheme} /></label>
       <button className={`settings-row ${pushState === "ready" ? "notification-ready" : ""}`} disabled={pushState === "checking" || pushState === "ready" || pushState === "unsupported"} onClick={() => void setupNotifications()}><span><strong>Notifications</strong><small>{notificationStatus}</small></span>{pushState === "checking" ? <LoaderCircle className="spin" size={19} /> : pushState === "ready" ? <Check size={19} /> : <Bell size={19} />}</button>
       <button className="settings-row" onClick={testPush}><span><strong>Test notifications</strong><small>Send a push to connected devices</small></span><Bell size={19} /></button>
+    </section>
+    <section className="settings-card"><p className="eyebrow">FOCUS LOCK</p>
+      <label className="settings-row"><span><strong>Unlock apps after</strong><small>Your iPhone Shortcut asks this before opening a locked app</small></span><select value={user.lockRule} onChange={(event) => void updateLockRule(event.target.value as LockRule)}>{LOCK_RULES.map((rule) => <option key={rule} value={rule}>{LOCK_RULE_LABELS[rule]}</option>)}</select></label>
+      {user.lockRule !== "off" && user.lockRule !== "half" && !active.some((habit) => habit.nonNegotiable) && <p className="muted settings-empty">No habit is marked non-negotiable yet. Edit a habit and turn on <strong>Non-negotiable</strong>.</p>}
     </section>
     <section className="settings-card"><p className="eyebrow">HABIT ORDER</p>
       {active.map((habit, index) => <div className="archive-row" key={habit.id}><span className="habit-icon small">{habit.icon}</span><div><strong>{habit.name}</strong><small>Position {index + 1}</small></div><span className="order-buttons"><button disabled={index === 0} aria-label={`Move ${habit.name} up`} onClick={() => void moveHabit(index, -1)}><ArrowUp size={15} /></button><button disabled={index === active.length - 1} aria-label={`Move ${habit.name} down`} onClick={() => void moveHabit(index, 1)}><ArrowDown size={15} /></button></span></div>)}

@@ -25,6 +25,8 @@ export const user = pgTable("user", {
   emailVerified: boolean("email_verified").default(false).notNull(),
   image: text("image"),
   timezone: text("timezone").default("Europe/Rome").notNull(),
+  // What unlocks distracting apps each day (see src/lib/focus-lock.ts).
+  lockRule: text("lock_rule", { enum: ["off", "half", "nonNegotiables", "either", "both"] }).default("off").notNull(),
   ...timestamps
 });
 
@@ -90,6 +92,7 @@ export const habits = pgTable(
     color: text("color").default("#7565d9").notNull(),
     sortOrder: integer("sort_order").default(0).notNull(),
     active: boolean("active").default(true).notNull(),
+    nonNegotiable: boolean("non_negotiable").default(false).notNull(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     ...timestamps
   },

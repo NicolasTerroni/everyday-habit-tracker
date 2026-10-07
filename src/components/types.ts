@@ -12,6 +12,7 @@ export type Habit = {
   color: string;
   sortOrder: number;
   active: boolean;
+  nonNegotiable: boolean;
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;

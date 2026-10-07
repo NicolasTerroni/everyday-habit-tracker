@@ -7,12 +7,14 @@ const habitBase = z.object({
   targetValue: z.coerce.number().positive().optional().nullable(),
   unit: z.string().trim().max(24).optional().nullable(),
   icon: z.string().trim().min(1).max(64),
-  color: z.string().regex(/^#[0-9a-fA-F]{6}$/)
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  nonNegotiable: z.boolean()
 });
 
 export const habitInput = habitBase.extend({
   icon: habitBase.shape.icon.default("✨"),
-  color: habitBase.shape.color.default("#7565d9")
+  color: habitBase.shape.color.default("#7565d9"),
+  nonNegotiable: habitBase.shape.nonNegotiable.default(false)
 }).superRefine((data, ctx) => {
   if (data.type !== "boolean" && !data.targetValue) {
     ctx.addIssue({ code: "custom", path: ["targetValue"], message: "Target is required" });
