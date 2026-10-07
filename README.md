@@ -153,6 +153,8 @@ To receive it by email instead, still on a free plan:
 
 `POST /api/integration/entries` with `{ "habitId": "…", "value": 250, "note": "…" }` logs an entry (value defaults to 1, time to now; a yes/no habit keeps one entry per day). `DELETE /api/integration/entries?id=…` removes one.
 
+`PATCH /api/integration/habits/<id>` with `{ "nonNegotiable": true }` changes only whether the focus lock requires that habit, e.g. a training coach that turns it on for training days and off for rest days.
+
 ## Focus lock on iPhone (optional)
 
 Everyday decides whether your distracting apps are locked; an iPhone Shortcut enforces it each time one of them opens.

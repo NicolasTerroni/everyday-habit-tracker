@@ -193,6 +193,7 @@ All application endpoints require a valid Better Auth session except the auth en
 | `GET /api/integration/habits` | Bearer token: habits, entries, and reminders for a date range |
 | `POST/DELETE /api/integration/entries` | Bearer token: log or remove an entry |
 | `GET /api/integration/lock` | Bearer token: whether distracting apps are locked right now |
+| `PATCH /api/integration/habits/:id` | Bearer token: set only `nonNegotiable` (a coach toggles it per training day) |
 
 Habit update validation deliberately has no defaults. Defaults belong only to creation requests; otherwise a reorder-only patch could overwrite icon or color.
 
