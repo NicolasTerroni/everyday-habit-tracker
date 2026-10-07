@@ -190,6 +190,7 @@ npm run lint            # ESLint
 npm run build           # production build
 npm run db:generate     # generate a migration after schema changes
 npm run db:migrate      # apply committed migrations
+npm run db:migrate:prod # apply them to production (DATABASE_URL_UNPOOLED in the ignored .env.neon)
 npm run docker:up       # build and start app + PostgreSQL
 npm run docker:logs     # follow container logs
 npm run docker:down     # stop containers and preserve data

@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:prod": "node --env-file=.env.neon node_modules/drizzle-kit/bin.cjs migrate",
     "db:push": "drizzle-kit push",
     "db:migrate:runtime": "node scripts/migrate.mjs",
     "docker:init": "node scripts/init-docker-env.mjs",
