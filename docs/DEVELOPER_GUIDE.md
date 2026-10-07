@@ -135,7 +135,8 @@ Sessions expire after 90 days but slide forward after continued use. Password ma
 - `type` is constrained to boolean, quantity, duration, or count;
 - non-boolean habits require a positive target and non-empty unit;
 - `sort_order` controls Today and Settings ordering;
-- archive is represented by `active = false` plus `archived_at`.
+- archive is represented by `active = false` plus `archived_at`;
+- `non_negotiable` marks habits the focus lock can require.
 
 Archiving is not deletion. Existing entries remain queryable. An archived habit disappears from Today immediately but is still visible on historical dates when it existed.
 
@@ -151,6 +152,16 @@ A reminder belongs to a habit. A device push subscription belongs directly to a 
 
 `notification_executions` has a unique constraint on `(reminder_id, scheduled_for)`. A cron retry therefore cannot send the same logical reminder twice.
 
+### Focus lock
+
+`user.lock_rule` chooses what unlocks distracting apps each day: `off`, `half` (at least half of today's active habits, rounded up), `nonNegotiables` (every habit with `non_negotiable`), `either`, or `both`. With no non-negotiable habit, that condition counts as met.
+
+`user.lock_windows` is a JSON array of up to six `{ start, end }` ranges (`HH:mm`, user timezone; a range may cross midnight). Apps are locked only inside a range until the rule is met; with no ranges the lock applies all day.
+
+The rule lives in `src/lib/focus-lock.ts` and has no server-only imports, so the Today banner and `GET /api/integration/lock` compute exactly the same answer. The app enforces nothing by itself: an iPhone Shortcut automation calls the integration route when a chosen app opens and sends the user back to Everyday while `locked` is true (see the README).
+
+The page reads `lock_rule` and `lock_windows` from the table rather than the session, because Better Auth caches the session cookie for five minutes.
+
 ## 7. Date and timezone rules
 
 - Database timestamps use `TIMESTAMPTZ`.
@@ -164,7 +175,7 @@ These rules are important around midnight and daylight-saving transitions. Avoid
 
 ## 8. API and authorization
 
-All application endpoints require a valid Better Auth session except the auth endpoints themselves and the signed QStash endpoint.
+All application endpoints require a valid Better Auth session except the auth endpoints themselves, the signed QStash endpoint, and the `/api/integration/*` routes, which accept a bearer token whose SHA-256 is `INTEGRATION_TOKEN_SHA256` and act for `INTEGRATION_USER_EMAIL` only.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -177,8 +188,11 @@ All application endpoints require a valid Better Auth session except the auth en
 | `PATCH/DELETE /api/reminders/:id` | Update or delete an owned reminder |
 | `POST/DELETE /api/push/subscribe` | Register or remove the current device |
 | `POST /api/push/test` | Send a test push to the current user's devices |
-| `PATCH /api/profile` | Update the current user's timezone |
+| `PATCH /api/profile` | Update the current user's timezone, focus-lock rule, or focus hours |
 | `POST /api/cron/reminders` | QStash-signed reminder evaluation |
+| `GET /api/integration/habits` | Bearer token: habits, entries, and reminders for a date range |
+| `POST/DELETE /api/integration/entries` | Bearer token: log or remove an entry |
+| `GET /api/integration/lock` | Bearer token: whether distracting apps are locked right now |
 
 Habit update validation deliberately has no defaults. Defaults belong only to creation requests; otherwise a reorder-only patch could overwrite icon or color.
 
