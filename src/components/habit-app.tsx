@@ -8,15 +8,15 @@ import {
 import {
   Archive, BarChart3, Bell, CalendarDays, Check, ChevronLeft, ChevronRight,
   ArrowDown, ArrowUp, Circle, Clock3, Home, LoaderCircle, Lock, LockOpen, Minus, MoreHorizontal, Plus, RotateCcw,
-  Settings, Sparkles
+  Settings, Sparkles, X
 } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
-import { isHabitComplete as isComplete, LOCK_RULE_LABELS, LOCK_RULES, lockStatus, type LockRule } from "@/lib/focus-lock";
+import { isHabitComplete as isComplete, LOCK_RULE_LABELS, LOCK_RULES, lockStatus, MAX_LOCK_WINDOWS, timeIn, type LockRule, type LockWindow } from "@/lib/focus-lock";
 import { Modal } from "./modal";
 import type { AppData, Entry, Habit, HabitType, Reminder } from "./types";
 
 type Tab = "today" | "calendar" | "insights" | "settings";
-type User = { name: string; email: string; timezone: string; lockRule: LockRule };
+type User = { name: string; email: string; timezone: string; lockRule: LockRule; lockWindows: LockWindow[] };
 type PushState = "checking" | "disconnected" | "ready" | "denied" | "unsupported" | "error";
 
 const COLORS = ["#7565d9", "#d96b5f", "#3f8f77", "#cf8b38", "#4e7cb8", "#9a5f90"];
@@ -206,7 +206,7 @@ export function HabitApp({ user: initialUser }: { user: User }) {
             {!isToday && <button className="text-button" onClick={() => setSelectedDate(localDate())}>Today</button>}
             <button className="date-step" disabled={isToday} onClick={() => setSelectedDate(localDate(addDays(displayDate, 1)))}><ChevronRight size={18} /></button>
           </PageHeader>
-          <TodayView loading={loading} habits={activeHabits} lockRule={isToday ? user.lockRule : "off"} entriesFor={entriesFor} onToggle={toggleBoolean} onAdd={(habit) => setEntryModal(habit)} onMenu={setMenuHabit} />
+          <TodayView loading={loading} habits={activeHabits} lockRule={isToday ? user.lockRule : "off"} lockWindows={user.lockWindows} timezone={user.timezone} entriesFor={entriesFor} onToggle={toggleBoolean} onAdd={(habit) => setEntryModal(habit)} onMenu={setMenuHabit} />
           <button className="fab" onClick={() => setHabitModal("new")} aria-label="Create habit"><Plus size={24} /></button>
         </>}
 
@@ -246,19 +246,30 @@ function greeting() {
   return hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
 }
 
-function TodayView({ loading, habits, lockRule, entriesFor, onToggle, onAdd, onMenu }: {
-  loading: boolean; habits: Habit[]; lockRule: LockRule; entriesFor: (id: string) => Entry[];
+function TodayView({ loading, habits, lockRule, lockWindows, timezone, entriesFor, onToggle, onAdd, onMenu }: {
+  loading: boolean; habits: Habit[]; lockRule: LockRule; lockWindows: LockWindow[]; timezone: string; entriesFor: (id: string) => Entry[];
   onToggle: (habit: Habit) => void; onAdd: (habit: Habit) => void; onMenu: (habit: Habit) => void;
 }) {
+  const now = useClock();
   if (loading) return <Loading />;
   if (!habits.length) return <EmptyState icon={<Sparkles />} title="A blank page" text="Create your first habit and begin a record that belongs only to you." />;
   const complete = habits.filter((habit) => isComplete(habit, entriesFor(habit.id))).length;
-  const lock = lockRule === "off" ? null : lockStatus(lockRule, habits, habits.flatMap((habit) => entriesFor(habit.id)));
+  const lock = lockRule === "off" ? null : lockStatus(lockRule, lockWindows, timeIn(now, timezone), habits, habits.flatMap((habit) => entriesFor(habit.id)));
   return <div className="today-wrap">
-    {lock && <div className={`lock-banner ${lock.locked ? "" : "unlocked"}`}>{lock.locked ? <Lock size={17} /> : <LockOpen size={17} />}<span><strong>{lock.locked ? "Apps locked" : "Apps unlocked"}</strong><small>{lock.locked ? lock.message.replace("Locked: ", "To unlock, ") : "You've earned your free time today"}</small></span></div>}
+    {lock && <div className={`lock-banner ${lock.locked ? "" : "unlocked"}`}>{lock.locked ? <Lock size={17} /> : <LockOpen size={17} />}<span><strong>{lock.locked ? "Apps locked" : "Apps unlocked"}{lock.locked && lock.focusHours ? ` until ${lock.focusHours.end}` : ""}</strong><small>{lock.locked ? lock.message.replace("Locked: ", "To unlock, ") : lock.goalMet ? "You've earned your free time today" : "Outside your focus hours"}</small></span></div>}
     <div className="day-progress"><div><span>{complete}</span> of {habits.length} complete</div><div className="progress-track"><i style={{ width: `${habits.length ? complete / habits.length * 100 : 0}%` }} /></div></div>
     <div className="habit-list">{habits.map((habit) => <HabitCard key={habit.id} habit={habit} entries={entriesFor(habit.id)} onToggle={() => onToggle(habit)} onAdd={() => onAdd(habit)} onMenu={() => onMenu(habit)} />)}</div>
   </div>;
+}
+
+// Re-renders every minute so the lock banner follows focus hours.
+function useClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return now;
 }
 
 function HabitCard({ habit, entries, onToggle, onAdd, onMenu }: { habit: Habit; entries: Entry[]; onToggle: () => void; onAdd: () => void; onMenu: () => void }) {
@@ -541,6 +552,11 @@ function SettingsView({ user, habits, loading, pushState, onConnectPush, onUser,
     onUser({ ...user, lockRule }); setMessage(lockRule === "off" ? "Focus lock turned off" : "Focus lock updated");
   }
 
+  async function updateLockWindows(lockWindows: LockWindow[]) {
+    await api("/api/profile", { method: "PATCH", body: JSON.stringify({ lockWindows }) });
+    onUser({ ...user, lockWindows }); setMessage(lockWindows.length ? "Focus hours saved" : "Focus lock now applies all day");
+  }
+
   async function testPush() {
     try { const result = await api<{ sent: number }>("/api/push/test", { method: "POST" }); setMessage(result.sent ? "Test notification sent" : "Connect notifications in Settings first"); }
     catch (cause) { setMessage(cause instanceof Error ? cause.message : "Test failed"); }
@@ -586,6 +602,7 @@ function SettingsView({ user, habits, loading, pushState, onConnectPush, onUser,
     <section className="settings-card"><p className="eyebrow">FOCUS LOCK</p>
       <label className="settings-row"><span><strong>Unlock apps after</strong><small>Your iPhone Shortcut asks this before opening a locked app</small></span><select value={user.lockRule} onChange={(event) => void updateLockRule(event.target.value as LockRule)}>{LOCK_RULES.map((rule) => <option key={rule} value={rule}>{LOCK_RULE_LABELS[rule]}</option>)}</select></label>
       {user.lockRule !== "off" && user.lockRule !== "half" && !active.some((habit) => habit.nonNegotiable) && <p className="muted settings-empty">No habit is marked non-negotiable yet. Edit a habit and turn on <strong>Non-negotiable</strong>.</p>}
+      {user.lockRule !== "off" && <FocusHours windows={user.lockWindows} onSave={updateLockWindows} />}
     </section>
     <section className="settings-card"><p className="eyebrow">HABIT ORDER</p>
       {active.map((habit, index) => <div className="archive-row" key={habit.id}><span className="habit-icon small">{habit.icon}</span><div><strong>{habit.name}</strong><small>Position {index + 1}</small></div><span className="order-buttons"><button disabled={index === 0} aria-label={`Move ${habit.name} up`} onClick={() => void moveHabit(index, -1)}><ArrowUp size={15} /></button><button disabled={index === active.length - 1} aria-label={`Move ${habit.name} down`} onClick={() => void moveHabit(index, 1)}><ArrowDown size={15} /></button></span></div>)}
@@ -596,6 +613,35 @@ function SettingsView({ user, habits, loading, pushState, onConnectPush, onUser,
     <section className="settings-card"><p className="eyebrow">ACCOUNT</p><button className="settings-row danger-text" onClick={async () => { await authClient.signOut(); window.location.reload(); }}><span><strong>Sign out</strong><small>Your data remains safely stored</small></span><ChevronRight size={18} /></button></section>
     <p className="settings-foot">Everyday v1 · No ads, streaks, or gamification.</p>
   </>;
+}
+
+function FocusHours({ windows, onSave }: { windows: LockWindow[]; onSave: (windows: LockWindow[]) => Promise<void> }) {
+  const [draft, setDraft] = useState(windows);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const changed = JSON.stringify(draft) !== JSON.stringify(windows);
+  const set = (index: number, key: keyof LockWindow, value: string) => setDraft(draft.map((range, i) => i === index ? { ...range, [key]: value } : range));
+
+  async function save() {
+    setBusy(true); setError("");
+    try { await onSave(draft); } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save focus hours"); }
+    setBusy(false);
+  }
+
+  return <div className="focus-hours">
+    <span><strong>Focus hours</strong><small>{draft.length ? "Apps are only locked inside these ranges" : "No ranges: apps are locked all day until the rule is met"}</small></span>
+    {draft.map((range, index) => <div className="focus-range" key={index}>
+      <input type="time" aria-label="From" value={range.start} onChange={(event) => set(index, "start", event.target.value)} />
+      <span>to</span>
+      <input type="time" aria-label="To" value={range.end} onChange={(event) => set(index, "end", event.target.value)} />
+      <button type="button" aria-label="Remove range" onClick={() => setDraft(draft.filter((_, i) => i !== index))}><X size={15} /></button>
+    </div>)}
+    <div className="focus-actions">
+      <button type="button" disabled={draft.length >= MAX_LOCK_WINDOWS} onClick={() => setDraft([...draft, draft.length ? { start: "18:00", end: "23:00" } : { start: "07:00", end: "09:00" }])}><Plus size={15} /> Add range</button>
+      {changed && <button type="button" className="save" disabled={busy || draft.some((range) => !range.start || !range.end)} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</button>}
+    </div>
+    {error && <p className="form-error">{error}</p>}
+  </div>;
 }
 
 function timezoneOptions(current: string) {

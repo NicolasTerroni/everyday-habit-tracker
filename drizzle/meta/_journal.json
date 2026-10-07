@@ -22,6 +22,13 @@
       "when": 1791309393598,
       "tag": "0002_nosy_jubilee",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791391629132,
+      "tag": "0003_legal_chameleon",
+      "breakpoints": true
     }
   ]
 }

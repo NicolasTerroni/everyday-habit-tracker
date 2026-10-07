@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "lock_windows" jsonb DEFAULT '[]'::jsonb NOT NULL;

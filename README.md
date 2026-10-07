@@ -40,7 +40,7 @@ If a free allowance is exhausted, these providers stop or suspend that resource 
 - A rolling one-year discipline heatmap based on daily target completion.
 - Idempotent notification executions and stale push-subscription cleanup.
 - Optional integration endpoints for a personal bot or script, authenticated by a bearer token: read habits and entries (`/api/integration/habits`), log or undo an entry (`/api/integration/entries`), check the focus lock (`/api/integration/lock`).
-- Focus lock: mark habits as non-negotiable and choose what unlocks distracting apps each day (half of today's habits, all non-negotiables, either, or both). An iPhone Shortcut enforces it.
+- Focus lock: mark habits as non-negotiable and choose what unlocks distracting apps each day (half of today's habits, all non-negotiables, either, or both), optionally only during focus hours such as 07:00–09:00 and 18:00–23:00. An iPhone Shortcut enforces it.
 - Installable iPhone PWA, service worker shell cache, offline indicator, and dark mode.
 
 ## Local setup
@@ -158,7 +158,7 @@ To receive it by email instead, still on a free plan:
 Everyday decides whether your distracting apps are locked; an iPhone Shortcut enforces it each time one of them opens.
 
 1. Set up the integration token above (`INTEGRATION_TOKEN_SHA256` and `INTEGRATION_USER_EMAIL`).
-2. In Everyday, open **Settings → Focus lock** and pick a rule. To use non-negotiables, edit those habits and turn on **Non-negotiable**.
+2. In Everyday, open **Settings → Focus lock** and pick a rule. To use non-negotiables, edit those habits and turn on **Non-negotiable**. Add **focus hours** to lock apps only during those ranges (for example before and after work); without ranges the lock applies all day. A range may cross midnight, but habits reset at midnight, so after it the new day's habits count.
 3. In the Shortcuts app, create a shortcut named **Focus check**:
    1. **Get Contents of URL**: `https://your-project.vercel.app/api/integration/lock`, method GET, header `Authorization` = `Bearer <token>`.
    2. **Get Dictionary Value** for key `message` in Contents of URL.
@@ -167,7 +167,7 @@ Everyday decides whether your distracting apps are locked; an iPhone Shortcut en
       - **Open URLs** with your Everyday URL. This takes you out of the app you were opening.
 4. In **Automation → New Automation → App**, choose the apps to lock (Instagram, TikTok, Chrome…), tick **Is Opened**, choose **Run Immediately**, and run **Focus check**.
 
-`GET /api/integration/lock` answers `{ locked, message, completed, total, halfNeeded, nonNegotiables: { completed, total, missing } }` for today in your timezone. "Half" rounds up (3 of 5). With no habit marked non-negotiable, that condition counts as met.
+`GET /api/integration/lock` answers `{ locked, message, goalMet, focusHours, completed, total, halfNeeded, nonNegotiables: { completed, total, missing } }` for the current time in your timezone. Outside focus hours `locked` is false and `message` is "Unlocked: outside focus hours". "Half" rounds up (3 of 5). With no habit marked non-negotiable, that condition counts as met.
 
 This is a speed bump, not a hard block: the automation can be turned off, and if the request fails (no connection) the app opens normally. iOS does not let Shortcuts see which website Chrome is showing, so locking Chrome locks all of it.
 

@@ -3,6 +3,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   text,
@@ -27,6 +28,7 @@ export const user = pgTable("user", {
   timezone: text("timezone").default("Europe/Rome").notNull(),
   // What unlocks distracting apps each day (see src/lib/focus-lock.ts).
   lockRule: text("lock_rule", { enum: ["off", "half", "nonNegotiables", "either", "both"] }).default("off").notNull(),
+  lockWindows: jsonb("lock_windows").$type<{ start: string; end: string }[]>().default([]).notNull(),
   ...timestamps
 });
 
