@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { todayIn } from "@/lib/dates";
 import { loadHabitData } from "@/lib/habit-data";
+import { createHabit } from "@/lib/habits";
 import { integrationError, integrationOwner } from "@/lib/integration";
+import { habitInput } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +24,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(await loadHabitData(owner.id, owner.timezone, from, to, true), {
       headers: { "Cache-Control": "no-store" }
     });
+  } catch (err) {
+    return integrationError(err);
+  }
+}
+
+// Creates a habit for the integration's account (the vault's agents), same fields and rules as the app's editor.
+export async function POST(request: NextRequest) {
+  const auth = await integrationOwner(request);
+  if ("error" in auth) return auth.error;
+  try {
+    return NextResponse.json(await createHabit(auth.owner.id, habitInput.parse(await request.json())), { status: 201 });
   } catch (err) {
     return integrationError(err);
   }
